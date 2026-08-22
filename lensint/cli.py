@@ -63,6 +63,16 @@ Examples:
         help="Export comprehensive forensic data to a JSON file",
     )
     parser.add_argument(
+        "--stix",
+        metavar="PATH",
+        help="Export STIX 2.1 threat intelligence bundle to specified path",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable result caching (always re-analyze)",
+    )
+    parser.add_argument(
         "--batch",
         action="store_true",
         help="Analyze all supported images within the target directory",
@@ -155,35 +165,62 @@ def main(args_list: List[str] = None) -> int:
             min_string_len=args.min_string_len,
             generate_visuals=True,
             perform_geolookup=args.geo_lookup,
+            use_cache=not args.no_cache,
         )
 
         result = analyzer.analyze()
         render_console_report(result, console=console, quiet=args.quiet)
 
+        if getattr(result, 'cache_hit', False):
+            console.print("[dim]⚡ Result loaded from cache[/dim]")
+        if hasattr(result, 'analysis_duration_seconds'):
+            console.print(f"[dim]Analysis completed in {result.analysis_duration_seconds:.2f}s[/dim]")
+
+        # In batch mode, multiple files are analysed.  Inserting the stem of
+        # the current target into the output path prevents each file from
+        # silently overwriting the previous one.
+        is_batch = len(targets) > 1
+
+        def _batch_path(base_path: str, stem: str) -> str:
+            """Insert <stem> before the extension of base_path when in batch mode."""
+            if not is_batch:
+                return base_path
+            root, ext = os.path.splitext(base_path)
+            return f"{root}_{stem}{ext}"
+
+        target_stem = os.path.splitext(os.path.basename(current_target))[0]
+
         if args.extract_overlay:
+            out_overlay = _batch_path(args.extract_overlay, target_stem)
             if result.stego.has_overlay_data:
                 from lensint.modules.stego import detect_overlay_data
                 with open(current_target, "rb") as f:
                     raw_b = f.read()
                 _, _, _, ov_bytes = detect_overlay_data(raw_b)
                 if ov_bytes:
-                    with open(args.extract_overlay, "wb") as f_out:
+                    with open(out_overlay, "wb") as f_out:
                         f_out.write(ov_bytes)
-                    console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {args.extract_overlay}")
+                    console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
             else:
-                console.print("[yellow]No overlay data found to extract.[/yellow]")
+                console.print(f"[yellow]No overlay data found in {os.path.basename(current_target)}.[/yellow]")
 
         if args.json:
-            json_path = args.json
+            json_path = _batch_path(args.json, target_stem)
             with open(json_path, "w", encoding="utf-8") as jf:
                 jf.write(render_json_report(result))
             console.print(f"[bold green]JSON forensic report written to:[/bold green] {json_path}")
 
         if args.html:
-            html_path = args.html
+            html_path = _batch_path(args.html, target_stem)
             with open(html_path, "w", encoding="utf-8") as hf:
                 hf.write(render_html_report(result))
             console.print(f"[bold green]HTML forensic report written to:[/bold green] {html_path}")
+
+        if args.stix:
+            from lensint.reporters.stix_rep import export_stix_report
+            stix_path = _batch_path(args.stix, target_stem)
+            export_stix_report(result, stix_path)
+            console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
 
     return 0
 

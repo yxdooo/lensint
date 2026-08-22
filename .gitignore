@@ -32,3 +32,4 @@ env/
 *.bin
 make_files.py
 !sample_images/**
+!lensint/web/**

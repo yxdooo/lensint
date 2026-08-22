@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lensint"
-version = "1.0.0"
+version = "2.0.0"
 description = "Advanced Image Forensics and Threat Analysis Framework"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -12,6 +12,23 @@ dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0",
     "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "python-multipart>=0.0.6",
+]
+cv = [
+    "opencv-python-headless>=4.8.0",
+]
+all = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "python-multipart>=0.0.6",
+    "opencv-python-headless>=4.8.0",
+    "pytest>=7.0.0",
 ]
 
 [project.scripts]

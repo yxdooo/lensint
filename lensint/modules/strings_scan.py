@@ -11,6 +11,13 @@ from lensint.core.models import StringsReport
 
 RE_IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b")
 RE_URL = re.compile(r"\b(?:https?|ftp|ws|wss)://[a-zA-Z0-9\-\._~:/?#\[\]@!$&\'()*+,;=%]+", re.IGNORECASE)
+RE_DOMAIN = re.compile(
+    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
+    r"(?:com|net|org|io|gov|edu|mil|int|co|uk|de|ru|cn|fr|br|in|jp|"
+    r"xyz|info|biz|me|tv|cc|tk|pw|top|club|online|site|app|dev|cloud|"
+    r"onion)\b",
+    re.IGNORECASE,
+)
 RE_ONION = re.compile(r"\b[a-z2-7]{16,56}\.onion\b", re.IGNORECASE)
 RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 RE_BASE64 = re.compile(r"\b[A-Za-z0-9+/]{20,}={0,2}\b")
@@ -90,20 +97,23 @@ def _is_valid_ipv4(ip_str: str) -> bool:
 
 
 def _is_valid_base64_blob(b64_str: str) -> bool:
-    if len(b64_str) % 4 != 0 or len(b64_str) < 20:
+    if len(b64_str) < 20:
         return False
-    
+
     if any(seq in b64_str for seq in BENIGN_IMAGE_SEQUENCES):
         return False
 
+    # Pad to nearest multiple of 4 so strings captured without trailing '='
+    # by the regex are still decodeable.
+    padded = b64_str + "=" * ((-len(b64_str)) % 4)
     try:
-        decoded = base64.b64decode(b64_str, validate=True)
+        decoded = base64.b64decode(padded, validate=True)
         if len(decoded) < 12:
             return False
-        
+
         printable_count = sum(1 for b in decoded if 32 <= b <= 126 or b in (9, 10, 13))
         ratio = printable_count / len(decoded)
-        
+
         if ratio >= 0.60 or decoded.startswith((b"MZ", b"\x7fELF", b"PK\x03\x04", b"{\"", b"<?xml", b"http", b"powershell")):
             return True
         return False
@@ -135,6 +145,18 @@ def analyze_strings(raw_bytes: bytes, min_len: int = 4, max_samples: int = 100) 
     all_urls = sorted(list(set(urls + onion_addresses)))
     report.iocs_detected["urls"] = all_urls
 
+    # 3. Stand-alone domains (not already part of a full URL)
+    raw_domains = list(set(RE_DOMAIN.findall(joined_text)))
+    # Remove domains that are sub-strings of an already-captured URL to avoid
+    # duplicates (e.g. "example.com" from "http://example.com/path")
+    url_set = set(all_urls)
+    standalone_domains = sorted(
+        d for d in raw_domains
+        if not any(d in u for u in url_set)
+        and not d.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff", ".bmp"))
+    )
+    report.iocs_detected["domains"] = standalone_domains
+
     # 3. Emails
     emails = sorted(list(set(RE_EMAIL.findall(joined_text))))
     valid_emails = [e for e in emails if not e.endswith((".jpg", ".png", ".gif", ".webp", ".tif"))]
@@ -161,6 +183,8 @@ def analyze_strings(raw_bytes: bytes, min_len: int = 4, max_samples: int = 100) 
         suspicious.append(f"Identified {len(valid_ips)} IPv4 address(es): {', '.join(valid_ips[:5])}")
     if all_urls:
         suspicious.append(f"Identified {len(all_urls)} URL/Onion endpoint(s): {', '.join(all_urls[:5])}")
+    if standalone_domains:
+        suspicious.append(f"Identified {len(standalone_domains)} standalone domain(s): {', '.join(standalone_domains[:5])}")
     if valid_emails:
         suspicious.append(f"Identified {len(valid_emails)} Email address(es): {', '.join(valid_emails[:5])}")
     if valid_b64:

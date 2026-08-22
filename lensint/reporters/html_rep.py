@@ -1,7 +1,13 @@
+import html
 import json
 import os
 from typing import Optional
 from lensint.core.models import AnalysisResult
+
+
+def _e(value: object) -> str:
+    """Escape a value for safe HTML rendering."""
+    return html.escape(str(value) if value is not None else "")
 
 
 def render_html_report(result: AnalysisResult) -> str:
@@ -14,23 +20,24 @@ def render_html_report(result: AnalysisResult) -> str:
     }
     badge_class = badge_map.get(result.overall_risk_level, "badge-low")
 
-    findings_html = "".join(f"<li>{f}</li>" for f in result.summary_findings)
+    findings_html = "".join(f"<li>{_e(f)}</li>" for f in result.summary_findings)
 
     raw_tags_html = ""
     for k, v in result.metadata.raw_tags.items():
-        raw_tags_html += f"<tr><td class='key-cell'>{k}</td><td class='val-cell'>{v}</td></tr>"
+        raw_tags_html += f"<tr><td class='key-cell'>{_e(k)}</td><td class='val-cell'>{_e(v)}</td></tr>"
 
     iocs = result.strings.iocs_detected
-    ipv4_html = "".join(f"<span class='ioc-tag ioc-ip'>{ip}</span>" for ip in iocs["ipv4"]) or "<span class='dim'>None</span>"
-    urls_html = "".join(f"<span class='ioc-tag ioc-url'>{u}</span>" for u in iocs["urls"]) or "<span class='dim'>None</span>"
-    emails_html = "".join(f"<span class='ioc-tag ioc-email'>{e}</span>" for e in iocs["emails"]) or "<span class='dim'>None</span>"
-    shells_html = "".join(f"<span class='ioc-tag ioc-shell'>{s}</span>" for s in iocs["shell_commands"]) or "<span class='dim'>None</span>"
-    wallets_html = "".join(f"<span class='ioc-tag ioc-wallet'>{w}</span>" for w in iocs["crypto_wallets"]) or "<span class='dim'>None</span>"
+    ipv4_html = "".join(f"<span class='ioc-tag ioc-ip'>{_e(ip)}</span>" for ip in iocs["ipv4"]) or "<span class='dim'>None</span>"
+    urls_html = "".join(f"<span class='ioc-tag ioc-url'>{_e(u)}</span>" for u in iocs["urls"]) or "<span class='dim'>None</span>"
+    emails_html = "".join(f"<span class='ioc-tag ioc-email'>{_e(e)}</span>" for e in iocs["emails"]) or "<span class='dim'>None</span>"
+    shells_html = "".join(f"<span class='ioc-tag ioc-shell'>{_e(s)}</span>" for s in iocs["shell_commands"]) or "<span class='dim'>None</span>"
+    wallets_html = "".join(f"<span class='ioc-tag ioc-wallet'>{_e(w)}</span>" for w in iocs["crypto_wallets"]) or "<span class='dim'>None</span>"
 
     ela_img = f"<img src='{result.tampering.ela_b64_image}' class='preview-img' />" if result.tampering.ela_b64_image else "<div class='no-img'>N/A</div>"
     ghost_img = f"<img src='{result.tampering.jpeg_ghost_b64_image}' class='preview-img' />" if result.tampering.jpeg_ghost_b64_image else ""
     fft_img = f"<img src='{result.ai_detection.fft_b64_image}' class='preview-img' />" if result.ai_detection.fft_b64_image else "<div class='no-img'>N/A</div>"
     cm_img = f"<img src='{result.tampering.copy_move_b64_image}' class='preview-img' />" if result.tampering.copy_move_b64_image else "<div class='no-img'>No Cloning Detected</div>"
+    splice_img = f"<img src='{result.tampering.splice_b64_image}' class='preview-img' />" if getattr(result.tampering, 'splice_b64_image', None) else ""
 
     intel_links_html = ""
     if result.threat_intel.virustotal_file_url:
@@ -47,6 +54,8 @@ def render_html_report(result: AnalysisResult) -> str:
         geo_html = f"<tr><td class='key-cell'>Physical Address</td><td class='val-cell'>{geo_name}</td></tr>"
 
     dqt_desc = result.tampering.dqt_identified_encoder or "Standard Non-JPEG / Custom Tables"
+    duration = getattr(result, 'analysis_duration_seconds', 0.0)
+    cache_note = " &middot; Loaded from cache" if getattr(result, 'cache_hit', False) else ""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -143,7 +152,7 @@ body {{
   <div class="header">
     <div>
       <div class="title">LENSINT <span>FORENSICS</span> v2.0</div>
-      <div class="subtitle">Target: {result.target_path} | Generated: {result.timestamp}</div>
+      <div class="subtitle">Target: {_e(result.target_path)} | Generated: {result.timestamp}</div>
     </div>
     <div class="badge {badge_class}">{result.overall_risk_level} (Score: {result.overall_risk_score}/100)</div>
   </div>
@@ -169,10 +178,12 @@ body {{
     <div class="card">
       <div class="card-title">2. Metadata & Geolocation</div>
       <table class="table">
-        <tr><td class="key-cell">Camera</td><td class="val-cell">{result.metadata.camera_make or 'N/A'} {result.metadata.camera_model or ''}</td></tr>
-        <tr><td class="key-cell">Software</td><td class="val-cell">{result.metadata.software or 'N/A'}</td></tr>
-        <tr><td class="key-cell">Original Date</td><td class="val-cell">{result.metadata.datetime_original or 'N/A'}</td></tr>
-        <tr><td class="key-cell">GPS Coordinates</td><td class="val-cell">{result.metadata.gps_info['latitude'] if result.metadata.gps_info else 'N/A'}, {result.metadata.gps_info['longitude'] if result.metadata.gps_info else 'N/A'}</td></tr>
+        <tr><td class="key-cell">Camera</td><td class="val-cell">{_e(result.metadata.camera_make or 'N/A')} {_e(result.metadata.camera_model or '')}</td></tr>
+        <tr><td class="key-cell">Software</td><td class="val-cell">{_e(result.metadata.software or 'N/A')}</td></tr>
+        <tr><td class="key-cell">Original Date</td><td class="val-cell">{_e(result.metadata.datetime_original or 'N/A')}</td></tr>
+        <tr><td class="key-cell">GPS Coordinates</td><td class="val-cell">{_e(result.metadata.gps_info['latitude']) if result.metadata.gps_info else 'N/A'}, {_e(result.metadata.gps_info['longitude']) if result.metadata.gps_info else 'N/A'}</td></tr>
+        <tr><td class="key-cell">Social Provenance</td><td class="val-cell">{_e(result.metadata.social_media_provenance or 'None / Direct Device')}</td></tr>
+        <tr><td class="key-cell">EXIF Thumbnail SSIM</td><td class="val-cell">{'MISMATCH (' + str(result.metadata.thumbnail_ssim_score) + ')' if result.metadata.thumbnail_mismatch_detected else 'Verified Match' if result.metadata.thumbnail_extracted else 'No embedded thumbnail'}</td></tr>
         {geo_html}
       </table>
     </div>
@@ -180,11 +191,14 @@ body {{
 
   <div class="grid-2">
     <div class="card">
-      <div class="card-title">3. AI / Synthetic Detection & 2D FFT Spectrum</div>
+      <div class="card-title">3. AI / Synthetic Detection &amp; 2D FFT Spectrum</div>
       <table class="table" style="margin-bottom: 12px;">
-        <tr><td class="key-cell">AI Verdict</td><td class="val-cell"><b>{result.ai_detection.ai_verdict}</b> (Score: {result.ai_detection.ai_probability_score}/100)</td></tr>
-        <tr><td class="key-cell">AI Generator</td><td class="val-cell">{result.ai_detection.ai_generator_name or 'None'}</td></tr>
-        <tr><td class="key-cell">C2PA Credentials</td><td class="val-cell">{', '.join(result.ai_detection.c2pa_markers) if result.ai_detection.c2pa_present else 'None'}</td></tr>
+        <tr><td class="key-cell">AI Verdict</td><td class="val-cell"><b>{_e(result.ai_detection.ai_verdict)}</b> (Score: {result.ai_detection.ai_probability_score}/100)</td></tr>
+        <tr><td class="key-cell">AI Generator</td><td class="val-cell">{_e(result.ai_detection.ai_generator_name or 'None')}</td></tr>
+        <tr><td class="key-cell">GAN Fingerprint</td><td class="val-cell">{'DETECTED (Score: ' + str(round(getattr(result.ai_detection, 'gan_fingerprint_score', 0))) + ')' if getattr(result.ai_detection, 'gan_fingerprint_detected', False) else 'Not detected'}</td></tr>
+        <tr><td class="key-cell">PRNU Sensor Noise</td><td class="val-cell">{'Present (Score: ' + str(result.ai_detection.prnu_sensor_score) + '/100)' if getattr(result.ai_detection, 'prnu_sensor_noise_detected', False) else 'Absent / Low (' + str(getattr(result.ai_detection, 'prnu_sensor_score', 0.0)) + '/100)'}</td></tr>
+        <tr><td class="key-cell">Inpainting Anomaly</td><td class="val-cell">{'DETECTED (' + str(getattr(result.ai_detection, 'inpainting_anomaly_score', 0.0)) + '/100)' if getattr(result.ai_detection, 'inpainting_anomaly_score', 0.0) > 50 else 'Uniform'}</td></tr>
+        <tr><td class="key-cell">C2PA Credentials</td><td class="val-cell">{_e(', '.join(result.ai_detection.c2pa_markers)) if result.ai_detection.c2pa_present else 'None'}</td></tr>
         <tr><td class="key-cell">2D FFT Spectral Score</td><td class="val-cell">{result.ai_detection.fft_spectral_score}/100.0 (Peak Ratio: {result.ai_detection.fft_peak_ratio})</td></tr>
       </table>
       {fft_img}
@@ -201,9 +215,10 @@ body {{
         <tr><td class="key-cell">8x8 DCT Block Grid Phase</td><td class="val-cell">{'SHIFTED (Offset: ' + str(result.tampering.block_grid_offset) + ')' if result.tampering.block_grid_shifted else 'Aligned (0,0)'}</td></tr>
         <tr><td class="key-cell">Chromatic Aberration Vector</td><td class="val-cell">{'MISMATCH (' + str(result.tampering.chromatic_aberration_inconsistency) + '/100)' if result.tampering.chromatic_aberration_detected else str(result.tampering.chromatic_aberration_inconsistency) + '/100 (Radial Convergence)'}</td></tr>
         <tr><td class="key-cell">Median Filter / Smoothing</td><td class="val-cell">{'DETECTED (' + str(result.tampering.median_filter_score) + '/100)' if result.tampering.median_filter_detected else 'Unsmoothed'}</td></tr>
+        <tr><td class="key-cell">Splice Detection</td><td class="val-cell">{'DETECTED (' + str(round(getattr(result.tampering, 'splice_confidence', 0))) + '% conf)' if getattr(result.tampering, 'splice_detected', False) else 'No splice artifacts'}</td></tr>
         <tr><td class="key-cell">Illumination Direction</td><td class="val-cell">{'CONFLICT (' + str(result.tampering.illumination_variance_score) + '/100)' if result.tampering.illumination_conflict_detected else 'Coherent Light Angle'}</td></tr>
       </table>
-      {ghost_img or cm_img or ela_img}
+      {ghost_img or splice_img or cm_img or ela_img}
     </div>
   </div>
 
@@ -213,6 +228,11 @@ body {{
       <table class="table">
         <tr><td class="key-cell">Appended Overlay</td><td class="val-cell">{'DETECTED (' + str(result.stego.overlay_size_bytes) + ' bytes)' if result.stego.has_overlay_data else 'Clean'}</td></tr>
         <tr><td class="key-cell">Malware / WebShells</td><td class="val-cell">{'CRITICAL: Threat Signatures Found' if result.malware.has_threats else 'Clean'}</td></tr>
+        <tr><td class="key-cell">YARA Rule Hits</td><td class="val-cell">{_e(', '.join(m['rule'] for m in getattr(result.malware, 'yara_matches', []))) if getattr(result.malware, 'yara_matches', []) else 'None'}</td></tr>
+        <tr><td class="key-cell">Deobfuscated Payloads</td><td class="val-cell">{str(len(getattr(result.malware, 'deobfuscated_payloads', []))) + ' extracted' if getattr(result.malware, 'deobfuscated_payloads', []) else 'None'}</td></tr>
+        <tr><td class="key-cell">RS Steganalysis</td><td class="val-cell">{'DETECTED (' + str(int(getattr(result.stego, 'rs_estimated_embedding_rate', 0)*100)) + '% capacity)' if getattr(result.stego, 'rs_steganalysis_detected', False) else 'Natural LSB'}</td></tr>
+        <tr><td class="key-cell">Stego Tool Signatures</td><td class="val-cell">{_e(', '.join(getattr(result.stego, 'stego_tool_signatures', []))) if getattr(result.stego, 'stego_tool_signatures', []) else 'None'}</td></tr>
+        <tr><td class="key-cell">Packed/Encrypted Payload</td><td class="val-cell">{'DETECTED (' + str(len(getattr(result.malware, 'high_entropy_sections', []))) + ' section(s))' if getattr(result.malware, 'packed_payload_detected', False) else 'None'}</td></tr>
         <tr><td class="key-cell">LSB Shannon Entropy</td><td class="val-cell">{result.stego.lsb_entropy.get('Average', 0.0)}/8.0</td></tr>
       </table>
     </div>
@@ -233,6 +253,10 @@ body {{
       <tr><td class="key-cell">Shell Keywords</td><td class="val-cell">{shells_html}</td></tr>
       <tr><td class="key-cell">Crypto Wallets</td><td class="val-cell">{wallets_html}</td></tr>
     </table>
+  </div>
+
+  <div style="text-align:center; color: var(--text-muted); font-size:12px; margin-top:20px;">
+    Analysis completed in {duration:.2f}s{cache_note}
   </div>
 </div>
 </body>

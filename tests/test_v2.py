@@ -187,6 +187,105 @@ class TestLensintV2Forensics(unittest.TestCase):
         self.assertEqual(res.overall_risk_level, "CLEAN")
         self.assertEqual(res.overall_risk_score, 0.0)
 
+    def test_09_stix_threat_bundle_export(self):
+        from lensint.reporters.stix_rep import export_stix_report, render_stix_report
+
+        p = os.path.join(self.tmp_dir, "sample.png")
+        with open(p, "wb") as f:
+            f.write(self.create_sample_png())
+
+        res = ImageAnalyzer(p, use_cache=False).analyze()
+        stix_json = render_stix_report(res)
+        parsed = json.loads(stix_json)
+
+        self.assertEqual(parsed["type"], "bundle")
+        self.assertIn("objects", parsed)
+        types = [obj["type"] for obj in parsed["objects"]]
+        self.assertIn("file", types)
+
+        out_path = os.path.join(self.tmp_dir, "threat.stix.json")
+        saved = export_stix_report(res, out_path)
+        self.assertTrue(os.path.exists(saved))
+
+    def test_10_caching_performance(self):
+        p = os.path.join(self.tmp_dir, "sample.png")
+        with open(p, "wb") as f:
+            f.write(self.create_sample_png())
+
+        # First run (cache miss or populated)
+        res1 = ImageAnalyzer(p, use_cache=True).analyze()
+        # Second run (cache hit)
+        res2 = ImageAnalyzer(p, use_cache=True).analyze()
+        self.assertTrue(res2.cache_hit)
+        self.assertEqual(res1.integrity.sha256, res2.integrity.sha256)
+        self.assertEqual(res1.overall_risk_level, res2.overall_risk_level)
+
+    def test_11_splice_and_multiscale_ela(self):
+        # Create JPEG for ELA and Splice testing
+        img = Image.new("RGB", (300, 300), color=(100, 150, 200))
+        p = os.path.join(self.tmp_dir, "test_ela.jpg")
+        img.save(p, format="JPEG", quality=85)
+
+        res = ImageAnalyzer(p, use_cache=False).analyze()
+        self.assertTrue(res.tampering.ela_performed)
+        self.assertGreaterEqual(res.tampering.ela_confidence, 0.0)
+        self.assertIsNotNone(res.tampering.splice_detected)
+
+    def test_12_high_entropy_section_detection(self):
+        from lensint.modules.malware_rules import analyze_malware_and_polyglots
+
+        # High entropy random payload simulation
+        random_bytes = b"\x89PNG\r\n\x1a\n" + os.urandom(2048)
+        report = analyze_malware_and_polyglots(random_bytes)
+        self.assertTrue(report.packed_payload_detected)
+        self.assertGreater(len(report.high_entropy_sections), 0)
+
+    def test_13_rs_steganalysis_and_tool_signatures(self):
+        from lensint.modules.stego import analyze_stego
+
+        # Stego tool signature presence simulation
+        raw_stego = b"\x89PNG\r\n\x1a\n" + b"OPENSTEGO_PAYLOAD_HERE" + b"IEND\xaeB`\x82"
+        img = Image.new("RGB", (64, 64), color=(50, 100, 150))
+        report = analyze_stego(raw_stego, img)
+        self.assertGreater(len(report.stego_tool_signatures), 0)
+        self.assertIn("OpenStego", report.stego_tool_signatures[0])
+
+    def test_14_yara_and_auto_deobfuscator(self):
+        from lensint.modules.malware_rules import analyze_malware_and_polyglots
+
+        # 1-Byte XOR encrypted string simulation (Key: 0x5A)
+        # target: "http://malicious-c2.com/beacon"
+        target = b"http://malicious-c2.com/beacon"
+        xor_bytes = bytes([b ^ 0x5A for b in target])
+        simulated_img_data = b"\xFF\xD8\xFF" + (b"\x00" * 100) + xor_bytes + (b"\x00" * 100)
+
+        report = analyze_malware_and_polyglots(simulated_img_data)
+        self.assertGreater(len(report.deobfuscated_payloads), 0)
+        self.assertEqual(report.deobfuscated_payloads[0]["matched_target"], "http://")
+
+    def test_15_prnu_and_inpainting_detection(self):
+        from lensint.modules.ai_detect import analyze_prnu_sensor_noise, detect_inpainting_anomalies
+
+        img = Image.new("RGB", (128, 128), color=(120, 120, 120))
+        present, score = analyze_prnu_sensor_noise(img)
+        self.assertIsInstance(present, bool)
+        self.assertGreaterEqual(score, 0.0)
+
+        inpaint_score = detect_inpainting_anomalies(img)
+        self.assertGreaterEqual(inpaint_score, 0.0)
+
+    def test_16_thumbnail_mismatch_and_provenance(self):
+        from lensint.modules.metadata import _detect_social_media_provenance
+
+        # WhatsApp signature simulation (1600px, no Exif)
+        img = Image.new("RGB", (1600, 1200), color=(10, 20, 30))
+        raw_jpeg = b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        prov = _detect_social_media_provenance(raw_jpeg, img, has_exif=False)
+        self.assertIsNotNone(prov)
+        self.assertIn("WhatsApp", prov)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

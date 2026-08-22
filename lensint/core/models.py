@@ -55,6 +55,11 @@ class MetadataReport:
     iptc_data: Dict[str, Any] = field(default_factory=dict)
     icc_profile: Dict[str, Any] = field(default_factory=dict)
     software_footprint_findings: List[str] = field(default_factory=list)
+    timestamp_anomalies: List[str] = field(default_factory=list)
+    social_media_provenance: Optional[str] = None
+    thumbnail_mismatch_detected: bool = False
+    thumbnail_ssim_score: float = 1.0
+    thumbnail_extracted: bool = False
     raw_tags: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -69,17 +74,20 @@ class TamperingReport:
     ela_difference_max: float = 0.0
     ela_difference_std: float = 0.0
     ela_suspicion_score: float = 0.0
+    ela_confidence: float = 0.0
     ela_b64_image: Optional[str] = None
 
     # 2. Copy-Move (Cloning) Detection
     copy_move_detected: bool = False
     copy_move_match_count: int = 0
+    copy_move_confidence: float = 0.0
     copy_move_b64_image: Optional[str] = None
 
     # 3. JPEG Ghosts (Double Compression)
     jpeg_ghosts_detected: bool = False
     jpeg_ghost_qualities: List[int] = field(default_factory=list)
     jpeg_ghost_difference_score: float = 0.0
+    jpeg_ghost_confidence: float = 0.0
     jpeg_ghost_b64_image: Optional[str] = None
 
     # 4. DQT Quantization Table Forensics
@@ -113,6 +121,12 @@ class TamperingReport:
     # 10. Laplacian Noise Variance
     noise_inconsistency_score: float = 0.0
 
+    # 11. Splice Detection
+    splice_detected: bool = False
+    splice_confidence: float = 0.0
+    splice_b64_image: Optional[str] = None
+    detected_regions: List[Dict[str, Any]] = field(default_factory=list)
+
     # Contextual Flag
     sensor_heuristics_suppressed: bool = False
 
@@ -134,6 +148,11 @@ class StegoReport:
     embedded_signatures: List[Dict[str, Any]] = field(default_factory=list)
     lsb_entropy: Dict[str, float] = field(default_factory=dict)
     lsb_stego_detected: bool = False
+    lsb_stego_confidence: float = 0.0
+    rs_steganalysis_detected: bool = False
+    rs_estimated_embedding_rate: float = 0.0
+    stego_tool_signatures: List[str] = field(default_factory=list)
+    extracted_passphrase_payload: Optional[str] = None
     extracted_payload_type: Optional[str] = None
     bitplane_b64_images: Dict[str, str] = field(default_factory=dict)
     findings: List[str] = field(default_factory=list)
@@ -178,6 +197,12 @@ class AIDetectionReport:
     fft_spectral_score: float = 0.0
     fft_peak_ratio: float = 0.0
     fft_b64_image: Optional[str] = None
+    gan_fingerprint_detected: bool = False
+    gan_fingerprint_score: float = 0.0
+    diffusion_artifact_score: float = 0.0
+    prnu_sensor_noise_detected: bool = False
+    prnu_sensor_score: float = 0.0
+    inpainting_anomaly_score: float = 0.0
     findings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -192,6 +217,10 @@ class MalwareReport:
     polyglot_types: List[str] = field(default_factory=list)
     webshell_detected: bool = False
     threat_signatures: List[str] = field(default_factory=list)
+    high_entropy_sections: List[Dict[str, Any]] = field(default_factory=list)
+    packed_payload_detected: bool = False
+    yara_matches: List[Dict[str, Any]] = field(default_factory=list)
+    deobfuscated_payloads: List[Dict[str, Any]] = field(default_factory=list)
     findings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -217,6 +246,8 @@ class AnalysisResult:
     overall_risk_score: float = 0.0
     overall_risk_level: str = "CLEAN"
     summary_findings: List[str] = field(default_factory=list)
+    analysis_duration_seconds: float = 0.0
+    cache_hit: bool = False
     integrity: IntegrityReport = field(default_factory=IntegrityReport)
     metadata: MetadataReport = field(default_factory=MetadataReport)
     tampering: TamperingReport = field(default_factory=TamperingReport)
@@ -233,6 +264,8 @@ class AnalysisResult:
             "overall_risk_score": self.overall_risk_score,
             "overall_risk_level": self.overall_risk_level,
             "summary_findings": self.summary_findings,
+            "analysis_duration_seconds": self.analysis_duration_seconds,
+            "cache_hit": self.cache_hit,
             "integrity": self.integrity.to_dict(),
             "metadata": self.metadata.to_dict(),
             "tampering": self.tampering.to_dict(),

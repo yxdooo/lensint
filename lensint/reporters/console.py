@@ -64,6 +64,11 @@ def render_console_report(result: AnalysisResult, console: Optional[Console] = N
             t_meta.add_row("Map Link", gps["google_maps_url"])
         else:
             t_meta.add_row("GPS Geolocation", "[dim]No GPS tags found[/dim]")
+        if result.metadata.social_media_provenance:
+            t_meta.add_row("Social Provenance", f"[yellow]{result.metadata.social_media_provenance}[/yellow]")
+        if result.metadata.thumbnail_extracted:
+            ssim_str = f"[bold red]MISMATCH (SSIM: {result.metadata.thumbnail_ssim_score})[/bold red]" if result.metadata.thumbnail_mismatch_detected else f"[green]Verified (SSIM: {result.metadata.thumbnail_ssim_score})[/green]"
+            t_meta.add_row("EXIF Thumbnail SSIM", ssim_str)
         console.print(t_meta)
 
         # 3. AI Generation & Deepfake Detection
@@ -76,14 +81,21 @@ def render_console_report(result: AnalysisResult, console: Optional[Console] = N
         c2pa_str = ", ".join(result.ai_detection.c2pa_markers) if result.ai_detection.c2pa_present else "None Detected"
         t_ai.add_row("C2PA Content Credentials", c2pa_str)
         t_ai.add_row("2D FFT Spectral Score", f"{result.ai_detection.fft_spectral_score}/100.0 (Peak Ratio: {result.ai_detection.fft_peak_ratio})")
+        prnu_str = f"[green]Present (Score: {result.ai_detection.prnu_sensor_score}/100)[/green]" if result.ai_detection.prnu_sensor_noise_detected else f"[bold yellow]Absent / Low ({result.ai_detection.prnu_sensor_score}/100)[/bold yellow]"
+        t_ai.add_row("PRNU Hardware Sensor", prnu_str)
         console.print(t_ai)
 
         # 4. Courtroom-Grade Deep Tampering Forensics
         t_tamp = Table(title="[bold]4. Courtroom-Grade Tampering & Manipulation Analysis[/bold]", box=box.SIMPLE_HEAVY, show_header=True)
         t_tamp.add_column("Forensic Method", style="bold white", width=26)
         t_tamp.add_column("Observation / Measurement", style="cyan")
-        t_tamp.add_row("Error Level Analysis (ELA)", f"{result.tampering.ela_suspicion_score} / 100.0 (Mean diff: {result.tampering.ela_difference_mean})")
-        
+        t_tamp.add_row("Error Level Analysis (ELA)", f"{result.tampering.ela_suspicion_score} / 100.0 (Confidence: {result.tampering.ela_confidence:.0f}%)")
+
+        if result.tampering.splice_detected:
+            t_tamp.add_row("Splice (Noise Map)", f"[bold red]DETECTED ({result.tampering.splice_confidence:.0f}% conf)[/bold red]")
+        else:
+            t_tamp.add_row("Splice (Noise Map)", "[green]Uniform Sensor Noise[/green]")
+
         cm_val = f"[bold red]DETECTED ({result.tampering.copy_move_match_count} pairs)[/bold red]" if result.tampering.copy_move_detected else "[green]Clean (No duplicate clusters)[/green]"
         t_tamp.add_row("Copy-Move Cloning", cm_val)
 
@@ -125,6 +137,15 @@ def render_console_report(result: AnalysisResult, console: Optional[Console] = N
             t_stego.add_row("Malware & Polyglots", f"[bold red]THREAT DETECTED: {thr_str}[/bold red]")
         else:
             t_stego.add_row("Malware & Polyglots", "[green]Clean (No webshells/polyglots)[/green]")
+        if result.malware.yara_matches:
+            y_rules = ", ".join(m["rule"] for m in result.malware.yara_matches)
+            t_stego.add_row("YARA Rule Matches", f"[bold red]{y_rules}[/bold red]")
+        if result.malware.deobfuscated_payloads:
+            t_stego.add_row("Deobfuscated Payloads", f"[bold red]{len(result.malware.deobfuscated_payloads)} extracted payload(s)[/bold red]")
+        if result.stego.rs_steganalysis_detected:
+            t_stego.add_row("RS Steganalysis", f"[bold red]DETECTED ({int(result.stego.rs_estimated_embedding_rate*100)}% capacity)[/bold red]")
+        if result.stego.stego_tool_signatures:
+            t_stego.add_row("Stego Tool Imprint", ", ".join(result.stego.stego_tool_signatures))
         if result.stego.lsb_entropy:
             ent = result.stego.lsb_entropy.get("Average", 0.0)
             t_stego.add_row("LSB Shannon Entropy", f"{ent}/8.0 ([bold red]Stego Alert[/bold red])" if result.stego.lsb_stego_detected else f"{ent}/8.0 (Normal)")

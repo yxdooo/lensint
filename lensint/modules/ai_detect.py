@@ -62,6 +62,45 @@ def calculate_fft_spectrum(pil_img: Image.Image) -> Tuple[np.ndarray, float, flo
     return norm_vis, round(score, 2), round(peak_ratio, 2), score >= 50.0
 
 
+def analyze_gan_fingerprint(arr: np.ndarray) -> Tuple[bool, float, float]:
+    fft2 = np.fft.fft2(arr)
+    fft_shifted = np.fft.fftshift(fft2)
+    magnitude = np.log(np.abs(fft_shifted) + 1.0)
+    
+    h, w = magnitude.shape
+    total_energy = float(np.sum(magnitude)) + 1e-6
+    
+    bin_h, bin_w = max(1, h // 8), max(1, w // 8)
+    periodic_energy = 0.0
+    
+    for i in range(8):
+        for j in range(8):
+            if i in [3, 4] and j in [3, 4]:
+                continue
+            bin_mag = magnitude[i*bin_h:(i+1)*bin_h, j*bin_w:(j+1)*bin_w]
+            if bin_mag.size > 0:
+                peak = float(np.max(bin_mag))
+                periodic_energy += peak
+                
+    gan_score = min(100.0, (periodic_energy / total_energy) * 500.0)
+    gan_detected = gan_score > 25.0
+    
+    cy, cx = h // 2, w // 2
+    y, x = np.ogrid[:h, :w]
+    dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    
+    mf_mask = (dist > min(h, w) * 0.1) & (dist < min(h, w) * 0.25)
+    hf_mask = (dist >= min(h, w) * 0.25)
+    
+    mf_energy = float(np.sum(magnitude[mf_mask])) if np.any(mf_mask) else 1.0
+    hf_energy = float(np.sum(magnitude[hf_mask])) if np.any(hf_mask) else 0.0
+    
+    diff_ratio = hf_energy / (mf_energy + 1e-6)
+    diffusion_score = min(100.0, diff_ratio * 40.0)
+    
+    return gan_detected, round(gan_score, 2), round(diffusion_score, 2)
+
+
 def scan_ai_metadata(raw_bytes: bytes, pil_img: Optional[Image.Image]) -> Dict[str, Any]:
     meta = {
         "generator": None,
@@ -70,12 +109,33 @@ def scan_ai_metadata(raw_bytes: bytes, pil_img: Optional[Image.Image]) -> Dict[s
         "c2pa_markers": [],
     }
 
-    for sig in C2PA_SIGNATURES:
+    # Structural / binary C2PA markers — these are definitive when found anywhere.
+    STRUCTURAL_C2PA = [b"c2pa", b"C2PA", b"urn:c2pa", b"jumb", b"Adobe Content Authenticity"]
+    # Brand-name strings that could also appear in free-text (copyright, descriptions).
+    # Only treat them as C2PA evidence when found inside a clear metadata/XMP/JSON context.
+    BRAND_C2PA = [b"OpenAI", b"Midjourney", b"DALL-E", b"StableDiffusion", b"NovelAI"]
+    CONTEXT_CHARS = set(b'"\'<>={};,')  # characters that suggest a structured context
+
+    for sig in STRUCTURAL_C2PA:
         if sig in raw_bytes:
             meta["c2pa_manifest_detected"] = True
             name = sig.decode("ascii", errors="ignore")
             if name not in meta["c2pa_markers"]:
                 meta["c2pa_markers"].append(name)
+
+    for sig in BRAND_C2PA:
+        idx = raw_bytes.find(sig)
+        while idx != -1:
+            # Check one byte before and after for a structured-context character
+            before = raw_bytes[max(0, idx - 1): idx]
+            after = raw_bytes[idx + len(sig): idx + len(sig) + 1]
+            if (before and before[0] in CONTEXT_CHARS) or (after and after[0] in CONTEXT_CHARS):
+                meta["c2pa_manifest_detected"] = True
+                name = sig.decode("ascii", errors="ignore")
+                if name not in meta["c2pa_markers"]:
+                    meta["c2pa_markers"].append(name)
+                break  # one confirmed hit per brand is enough
+            idx = raw_bytes.find(sig, idx + 1)
 
     if pil_img and hasattr(pil_img, "info") and pil_img.info:
         for k, v in pil_img.info.items():
@@ -96,6 +156,94 @@ def scan_ai_metadata(raw_bytes: bytes, pil_img: Optional[Image.Image]) -> Dict[s
                     meta["parameters"][label] = match.group(1).strip()
 
     return meta
+
+
+def analyze_prnu_sensor_noise(pil_img: Image.Image) -> Tuple[bool, float]:
+    """Estimate PRNU (Photo Response Non-Uniformity) camera sensor fingerprint.
+
+    Real physical camera sensors introduce subtle, correlated noise across RGB channels.
+    Purely synthetic generative AI images lack this natural hardware sensor footprint.
+
+    Returns: (sensor_noise_detected: bool, sensor_score: float [0-100])
+    """
+    try:
+        rgb = np.array(pil_img.convert("RGB"), dtype=np.float32)
+        h, w, c = rgb.shape
+        if h < 64 or w < 64:
+            return False, 50.0
+
+        # Extract high-frequency noise residual per channel by subtracting local 3x3 mean
+        residuals = []
+        for ch in range(3):
+            ch_data = rgb[:, :, ch]
+            # Fast 3x3 local average
+            padded = np.pad(ch_data, 1, mode="edge")
+            local_mean = (
+                padded[:-2, :-2] + padded[:-2, 1:-1] + padded[:-2, 2:] +
+                padded[1:-1, :-2] + padded[1:-1, 1:-1] + padded[1:-1, 2:] +
+                padded[2:, :-2] + padded[2:, 1:-1] + padded[2:, 2:]
+            ) / 9.0
+            residual = ch_data - local_mean
+            residuals.append(residual)
+
+        r_res, g_res, b_res = residuals
+        r_flat, g_flat, b_flat = r_res.flatten()[::10], g_res.flatten()[::10], b_res.flatten()[::10]
+
+        if np.std(r_flat) < 1e-4 or np.std(g_flat) < 1e-4 or np.std(b_flat) < 1e-4:
+            # Completely flat/synthetic surface, no sensor noise present
+            return False, 0.0
+
+        # Compute cross-channel Pearson correlation of high-frequency noise
+        corr_rg = float(np.corrcoef(r_flat, g_flat)[0, 1])
+        corr_gb = float(np.corrcoef(g_flat, b_flat)[0, 1])
+
+        if np.isnan(corr_rg) or np.isnan(corr_gb):
+            return False, 0.0
+
+        avg_corr = (abs(corr_rg) + abs(corr_gb)) / 2.0
+        # Physical camera sensors exhibit positive cross-channel noise correlation (usually 0.25 - 0.70)
+        sensor_score = min(100.0, max(0.0, avg_corr * 150.0))
+        sensor_present = sensor_score > 35.0
+        return sensor_present, round(sensor_score, 2)
+    except Exception:
+        return False, 50.0
+
+
+def detect_inpainting_anomalies(pil_img: Image.Image) -> float:
+    """Detect regional inpainting / localized generative anomalies across image patches."""
+    try:
+        gray = np.array(pil_img.convert("L"), dtype=np.float32)
+        h, w = gray.shape
+        patch_size = 64
+        if h < patch_size * 2 or w < patch_size * 2:
+            return 0.0
+
+        # Compute gradient magnitude
+        gx = gray[:, 1:] - gray[:, :-1]
+        gy = gray[1:, :] - gray[:-1, :]
+        min_h, min_w = min(gx.shape[0], gy.shape[0]), min(gx.shape[1], gy.shape[1])
+        grad_mag = np.sqrt(gx[:min_h, :min_w]**2 + gy[:min_h, :min_w]**2)
+
+        variances = []
+        for y in range(0, min_h - patch_size, patch_size):
+            for x in range(0, min_w - patch_size, patch_size):
+                patch = grad_mag[y:y+patch_size, x:x+patch_size]
+                variances.append(float(np.var(patch)))
+
+        if len(variances) < 4:
+            return 0.0
+
+        var_array = np.array(variances)
+        # Ratio of maximum local gradient variance to median gradient variance
+        median_var = float(np.median(var_array)) + 1e-6
+        max_var = float(np.max(var_array))
+        ratio = max_var / median_var
+
+        # Inpainted regions exhibit severe local variance discrepancy
+        anomaly_score = min(100.0, max(0.0, (ratio - 2.5) * 20.0))
+        return round(anomaly_score, 2)
+    except Exception:
+        return 0.0
 
 
 def analyze_ai_generation(
@@ -128,14 +276,48 @@ def analyze_ai_generation(
                 rep.fft_b64_image = numpy_to_base64_png(vis)
             if ai_susp:
                 rep.findings.append(f"2D FFT Frequency Analysis reveals periodic grid spikes (Score: {score}/100.0).")
+
+            gray = np.array(pil_img.convert("L"), dtype=np.float32)
+            gan_det, gan_score, diff_score = analyze_gan_fingerprint(gray)
+            rep.gan_fingerprint_detected = gan_det
+            rep.gan_fingerprint_score = gan_score
+            rep.diffusion_artifact_score = diff_score
+
+            if gan_det:
+                rep.findings.append(f"GAN upsampling fingerprint detected (Score: {gan_score}/100.0).")
+            if diff_score > 60.0:
+                rep.findings.append(f"Diffusion model high-frequency noise signature detected (Score: {diff_score}/100.0).")
+
+            # PRNU Sensor Noise Analysis
+            prnu_present, prnu_score = analyze_prnu_sensor_noise(pil_img)
+            rep.prnu_sensor_noise_detected = prnu_present
+            rep.prnu_sensor_score = prnu_score
+            if not prnu_present and not rep.c2pa_present and (rep.fft_spectral_score > 40 or diff_score > 40):
+                rep.findings.append(f"Physical camera sensor noise (PRNU) absent (Sensor Score: {prnu_score}/100). Synthetic origin suspected.")
+
+            # Inpainting Anomaly Detection
+            inpainting_score = detect_inpainting_anomalies(pil_img)
+            rep.inpainting_anomaly_score = inpainting_score
+            if inpainting_score > 50.0:
+                rep.findings.append(f"Regional generative inpainting anomaly detected (Discrepancy Score: {inpainting_score}/100.0).")
+
         except Exception as e:
-            rep.findings.append(f"FFT error: {str(e)}")
+            rep.findings.append(f"FFT/GAN/PRNU error: {str(e)}")
 
     if rep.ai_generator_detected:
         rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = True, 100.0, "CONFIRMED_AI"
-    elif rep.fft_spectral_score >= 65.0:
-        rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = True, rep.fft_spectral_score, "HIGH_PROBABILITY_AI"
+    elif rep.fft_spectral_score >= 65.0 or getattr(rep, 'inpainting_anomaly_score', 0) > 75.0:
+        rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = True, max(rep.fft_spectral_score, rep.inpainting_anomaly_score), "HIGH_PROBABILITY_AI"
     else:
         rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = False, max(0.0, rep.fft_spectral_score), "ORGANIC_NATURAL"
+
+    if hasattr(rep, 'gan_fingerprint_score'):
+        new_prob = rep.ai_probability_score + rep.gan_fingerprint_score * 0.4 + rep.diffusion_artifact_score * 0.2
+        if not rep.prnu_sensor_noise_detected and rep.prnu_sensor_score < 20.0:
+            new_prob += 15.0  # penalty for complete lack of hardware sensor noise
+        rep.ai_probability_score = min(100.0, max(0.0, new_prob))
+        if rep.ai_probability_score > 65.0 and rep.ai_verdict == "ORGANIC_NATURAL":
+            rep.is_ai_generated = True
+            rep.ai_verdict = "HIGH_PROBABILITY_AI"
 
     return rep

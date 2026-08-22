@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 import os
+import time
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from lensint.cache import get_cached, put_cache
 
 from lensint.core.models import AnalysisResult
 from lensint.modules.integrity import analyze_integrity
@@ -22,14 +25,46 @@ class ImageAnalyzer:
         min_string_len: int = 4,
         generate_visuals: bool = True,
         perform_geolookup: bool = False,
+        use_cache: bool = True,
     ):
         self.file_path = os.path.abspath(file_path)
         self.ela_quality = ela_quality
         self.min_string_len = min_string_len
         self.generate_visuals = generate_visuals
         self.perform_geolookup = perform_geolookup
+        self.use_cache = use_cache
+    def _result_from_dict(self, d: dict) -> AnalysisResult:
+        """Reconstruct AnalysisResult from a cached dict (best-effort)."""
+        result = AnalysisResult()
+        for key in ("target_path", "timestamp", "overall_risk_score", "overall_risk_level",
+                    "summary_findings", "analysis_duration_seconds"):
+            if key in d:
+                setattr(result, key, d[key])
+        result.cache_hit = True
+        if "summary_findings" not in d or not result.summary_findings:
+            result.summary_findings = []
+        if "Result loaded from cache. Use --no-cache to force re-analysis." not in result.summary_findings:
+            result.summary_findings.insert(0, "Result loaded from cache. Use --no-cache to force re-analysis.")
+
+        def _fill(obj, src: dict):
+            for k, v in src.items():
+                try:
+                    setattr(obj, k, v)
+                except Exception:
+                    pass
+
+        if "integrity" in d:   _fill(result.integrity, d["integrity"])
+        if "metadata" in d:    _fill(result.metadata, d["metadata"])
+        if "tampering" in d:   _fill(result.tampering, d["tampering"])
+        if "stego" in d:       _fill(result.stego, d["stego"])
+        if "strings" in d:     _fill(result.strings, d["strings"])
+        if "ai_detection" in d: _fill(result.ai_detection, d["ai_detection"])
+        if "malware" in d:     _fill(result.malware, d["malware"])
+        if "threat_intel" in d: _fill(result.threat_intel, d["threat_intel"])
+        return result
 
     def analyze(self) -> AnalysisResult:
+        start_time = time.monotonic()
         result = AnalysisResult()
         result.target_path = self.file_path
         result.timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -40,10 +75,53 @@ class ImageAnalyzer:
             result.summary_findings.append(f"Fatal read error: {err_msg}")
             result.overall_risk_score = 100.0
             result.overall_risk_level = "CRITICAL"
+            result.analysis_duration_seconds = time.monotonic() - start_time
             return result
 
         result.integrity = analyze_integrity(self.file_path, raw_bytes, pil_img)
-        result.metadata = analyze_metadata(raw_bytes, pil_img)
+
+        # Decompression Bomb / High-Resolution DoS protection:
+        # Downsample extremely large images before heavy concurrent pixel operations.
+        if pil_img is not None:
+            from lensint.utils.image_ops import downsample_for_analysis
+            pil_img, was_sampled = downsample_for_analysis(pil_img, max_pixels=4_000_000, max_side=2000)
+            if was_sampled:
+                result.summary_findings.append("Large image resolution downsampled for safe concurrent analysis.")
+
+        if self.use_cache:
+            cached = get_cached(result.integrity.sha256)
+            if cached is not None:
+                res = self._result_from_dict(cached)
+                res.analysis_duration_seconds = time.monotonic() - start_time
+                return res
+
+        def _run_metadata():
+            return analyze_metadata(raw_bytes, pil_img.copy() if pil_img else None)
+
+        def _run_stego():
+            return analyze_stego(raw_bytes, pil_img.copy() if pil_img else None, generate_visuals=self.generate_visuals)
+
+        def _run_strings():
+            return analyze_strings(raw_bytes, min_len=self.min_string_len)
+
+        def _run_ai_detect():
+            return analyze_ai_generation(raw_bytes, pil_img.copy() if pil_img else None, generate_visuals=self.generate_visuals)
+
+        def _run_malware():
+            return analyze_malware_and_polyglots(raw_bytes)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            f_metadata = executor.submit(_run_metadata)
+            f_stego = executor.submit(_run_stego)
+            f_strings = executor.submit(_run_strings)
+            f_ai = executor.submit(_run_ai_detect)
+            f_malware = executor.submit(_run_malware)
+
+            result.metadata = f_metadata.result()
+            result.stego = f_stego.result()
+            result.strings = f_strings.result()
+            result.ai_detection = f_ai.result()
+            result.malware = f_malware.result()
 
         if self.perform_geolookup and result.metadata.gps_info:
             lat = result.metadata.gps_info["latitude"]
@@ -57,19 +135,18 @@ class ImageAnalyzer:
             generate_visuals=self.generate_visuals,
             is_screenshot=result.integrity.is_screenshot,
         )
-        result.stego = analyze_stego(raw_bytes, pil_img, generate_visuals=self.generate_visuals)
-        result.strings = analyze_strings(raw_bytes, min_len=self.min_string_len)
-        result.ai_detection = analyze_ai_generation(raw_bytes, pil_img, generate_visuals=self.generate_visuals)
-        result.malware = analyze_malware_and_polyglots(raw_bytes)
 
         result.threat_intel = generate_threat_intel_links(
             sha256_hash=result.integrity.sha256,
             ips=result.strings.iocs_detected["ipv4"],
-            domains=result.strings.iocs_detected["urls"],
+            domains=result.strings.iocs_detected["domains"],
             urls=result.strings.iocs_detected["urls"],
         )
 
         self._calculate_verdict(result)
+        result.analysis_duration_seconds = time.monotonic() - start_time
+        if self.use_cache:
+            put_cache(result.integrity.sha256, result.to_dict())
         return result
 
     def _calculate_verdict(self, result: AnalysisResult) -> None:
@@ -160,6 +237,23 @@ class ImageAnalyzer:
         if result.metadata.software_footprint_findings:
             score += 10.0
             findings.append(f"Metadata confirms editing: {result.metadata.software_footprint_findings[0]}")
+
+        if result.metadata.thumbnail_mismatch_detected:
+            score += 40.0
+            findings.append(f"EXIF Thumbnail Mismatch (SSIM: {result.metadata.thumbnail_ssim_score}): Deliberate selective editing detected.")
+
+        if result.stego.rs_steganalysis_detected:
+            score += 25.0
+            findings.append(f"RS Steganalysis confirmed LSB replacement (Est. payload capacity: {int(result.stego.rs_estimated_embedding_rate*100)}%).")
+
+        if result.malware.yara_matches:
+            score += 45.0
+            yara_names = ", ".join(m["rule"] for m in result.malware.yara_matches[:2])
+            findings.append(f"YARA Rule match confirmed threat: {yara_names}.")
+
+        if result.malware.deobfuscated_payloads:
+            score += 35.0
+            findings.append(f"Auto-Deobfuscator extracted {len(result.malware.deobfuscated_payloads)} hidden payload(s).")
 
         if result.strings.iocs_detected["shell_commands"]:
             score += 35.0

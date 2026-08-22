@@ -57,13 +57,26 @@ def detect_screenshot_characteristics(pil_img: Image.Image, filename: str, is_pn
     # 2. Check for typical UI raster flat color runs & sharp UI lines
     try:
         arr = np.array(pil_img.convert("RGB"), dtype=np.int32)
+
+        # Guard: flat-color images (logos, icons, diagrams) have very few
+        # unique colors and produce near-100% zero-diff rates — they are NOT
+        # screenshots. Require at least 16 distinct colors before running the
+        # zero-neighbor heuristic.
+        flat = arr.reshape(-1, 3)
+        step = max(1, len(flat) // 50000)  # sample up to 50 k pixels for speed
+        unique_colors = len(set(map(tuple, flat[::step].tolist())))
+        if unique_colors < 16:
+            if has_screenshot_name:
+                return True, "Screen Capture (Identified by filename)"
+            return False, None
+
         # Check horizontal and vertical neighbor difference zero rates
         diff_x = arr[:, 1:, :] - arr[:, :-1, :]
         diff_y = arr[1:, :, :] - arr[:-1, :, :]
         zero_x = np.mean(np.all(diff_x == 0, axis=2))
         zero_y = np.mean(np.all(diff_y == 0, axis=2))
 
-        # UI screen captures typically have >= 25% identical neighboring pixels due to window bars, backgrounds, and text layout
+        # UI screen captures typically have >= 22% identical neighboring pixels due to window bars, backgrounds, and text layout
         if zero_x >= 0.22 or zero_y >= 0.22 or (zero_x >= 0.15 and is_png and has_screenshot_name):
             stype = "Digital UI Screen Capture / Framebuffer"
             return True, stype
@@ -94,10 +107,21 @@ def analyze_integrity(file_path: str, raw_bytes: bytes, pil_img: Optional[Image.
     detected_sig = None
     for sig in IMAGE_SIGNATURES:
         hdr = sig["header"]
+        # WEBP uses RIFF as its outer container, so we must check the WEBP
+        # sub-type marker at bytes 8-11 BEFORE doing a generic startswith(RIFF).
+        # This prevents AVI, WAV, and other RIFF-family files from being
+        # misidentified as WEBP.
+        if sig["name"] == "WEBP":
+            if (
+                len(raw_bytes) >= 12
+                and raw_bytes[:4] == b"RIFF"
+                and raw_bytes[8:12] == b"WEBP"
+            ):
+                detected_sig = sig
+                break
+            # Not WEBP — skip to next signature without running startswith
+            continue
         if raw_bytes.startswith(hdr):
-            detected_sig = sig
-            break
-        if hdr == b"RIFF" and len(raw_bytes) >= 12 and raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
             detected_sig = sig
             break
 

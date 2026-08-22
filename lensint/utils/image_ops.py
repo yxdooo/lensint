@@ -71,3 +71,79 @@ def numpy_to_base64_png(arr: np.ndarray) -> str:
         raise ValueError(f"Unsupported array shape: {arr.shape}")
 
     return image_to_base64(img, "PNG")
+
+
+def downsample_for_analysis(pil_img: Image.Image, max_pixels: int = 4_000_000,
+                             max_side: int = 2000) -> Tuple[Image.Image, bool]:
+    """Downsample large images before expensive pixel-level analysis.
+
+    Returns the (possibly downsampled) image and a boolean indicating
+    whether downsampling was applied.  The caller should use this for
+    analysis only — the original image is not modified.
+
+    Args:
+        pil_img:    Source PIL image.
+        max_pixels: Maximum total pixel count before downsampling triggers.
+        max_side:   Maximum length of the longer side after downsampling.
+
+    Returns:
+        (image, was_downsampled)
+    """
+    w, h = pil_img.size
+    if w * h <= max_pixels:
+        return pil_img, False
+
+    scale = min(max_side / max(w, h), 1.0)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    return pil_img.resize((new_w, new_h), Image.LANCZOS), True
+
+
+def heatmap_to_base64(values: np.ndarray, scale: int = 4) -> str:
+    """Convert a 2-D float array to a false-colour heatmap PNG data URI.
+
+    Colour mapping (normalised 0-1):
+        0.0 – 0.33  → blue  (low)
+        0.33 – 0.66 → green (medium)
+        0.66 – 1.0  → red   (high)
+
+    Args:
+        values: 2-D numpy array of floats.
+        scale:  Integer zoom factor applied before encoding.
+
+    Returns:
+        Base-64 encoded PNG data URI string.
+    """
+    if values.size == 0:
+        return ""
+
+    norm = (values - values.min()) / max(values.max() - values.min(), 1e-9)
+    h, w = norm.shape
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+
+    low = norm < 0.33
+    mid = (norm >= 0.33) & (norm < 0.66)
+    high = norm >= 0.66
+
+    # Blue range
+    t_low = norm[low] / 0.33
+    rgb[low, 2] = 255
+    rgb[low, 1] = (t_low * 100).astype(np.uint8)
+
+    # Green range
+    t_mid = (norm[mid] - 0.33) / 0.33
+    rgb[mid, 1] = 200
+    rgb[mid, 0] = (t_mid * 100).astype(np.uint8)
+    rgb[mid, 2] = ((1 - t_mid) * 100).astype(np.uint8)
+
+    # Red range
+    t_high = (norm[high] - 0.66) / 0.34
+    rgb[high, 0] = 255
+    rgb[high, 1] = ((1 - t_high) * 80).astype(np.uint8)
+
+    img = Image.fromarray(rgb, mode="RGB")
+    if scale > 1:
+        img = img.resize((w * scale, h * scale), Image.NEAREST)
+
+    return image_to_base64(img, "PNG")
+

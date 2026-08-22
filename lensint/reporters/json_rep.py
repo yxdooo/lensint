@@ -12,7 +12,12 @@ def render_json_report(result: AnalysisResult, indent: int = 2) -> str:
 def export_json_report(result: AnalysisResult, output_path: str, indent: int = 2) -> str:
     """Export JSON report to specified destination path."""
     abs_path = os.path.abspath(output_path)
-    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    parent_dir = os.path.dirname(abs_path)
+    # os.path.dirname of a bare filename (e.g. "report.json") returns "",
+    # and os.makedirs("") raises FileNotFoundError — only call it when there
+    # is an actual directory component to create.
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(render_json_report(result, indent=indent))
     return abs_path

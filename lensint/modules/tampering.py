@@ -33,23 +33,31 @@ from lensint.utils.image_ops import numpy_to_base64_png
 # ============================================================================
 # 1. Error Level Analysis (ELA)
 # ============================================================================
-def perform_ela(pil_img: Image.Image, quality: int = 90, multiplier: float = 15.0) -> Tuple[np.ndarray, float, float, float, float]:
-    orig_rgb = pil_img.convert("RGB")
-    buf = io.BytesIO()
-    orig_rgb.save(buf, format="JPEG", quality=quality)
-    buf.seek(0)
-    recompressed = Image.open(buf).convert("RGB")
+def perform_ela(pil_img: Image.Image, quality: int = 90, multiplier: float = 15.0) -> Tuple[np.ndarray, float, float, float, float, str]:
+    if getattr(pil_img, 'format', None) == 'PNG':
+        h, w = pil_img.height, pil_img.width
+        return np.zeros((h, w), dtype=np.uint8), 0.0, 0.0, 0.0, 0.0, "Skipped ELA for PNG image to avoid artificial format-conversion artifacts."
 
+    orig_rgb = pil_img.convert("RGB")
     orig_arr = np.array(orig_rgb, dtype=np.float32)
-    recomp_arr = np.array(recompressed, dtype=np.float32)
-    diff = np.abs(orig_arr - recomp_arr)
+    h, w, _ = orig_arr.shape
+    
+    diff_sum = np.zeros((h, w, 3), dtype=np.float32)
+    for q in [70, 80, 90]:
+        buf = io.BytesIO()
+        orig_rgb.save(buf, format="JPEG", quality=q)
+        buf.seek(0)
+        recompressed = Image.open(buf).convert("RGB")
+        recomp_arr = np.array(recompressed, dtype=np.float32)
+        diff_sum += np.abs(orig_arr - recomp_arr)
+        
+    diff = diff_sum / 3.0
 
     mean_diff = float(np.mean(diff))
     max_diff = float(np.max(diff))
     std_diff = float(np.std(diff))
     ela_vis = np.clip(diff * multiplier, 0, 255).astype(np.uint8)
 
-    h, w, _ = diff.shape
     block_size = 32
     block_means = []
     if h >= block_size and w >= block_size:
@@ -66,7 +74,7 @@ def perform_ela(pil_img: Image.Image, quality: int = 90, multiplier: float = 15.
         discrepancy = p95 - global_median
         suspicion_score = min(100.0, max(0.0, discrepancy * 8.0 + (std_diff * 4.0)))
 
-    return ela_vis, mean_diff, max_diff, std_diff, round(suspicion_score, 2)
+    return ela_vis, mean_diff, max_diff, std_diff, round(suspicion_score, 2), ""
 
 
 # ============================================================================
@@ -105,6 +113,51 @@ def detect_copy_move(pil_img: Image.Image, min_matches: int = 8) -> Tuple[bool, 
 
     return detected, match_count, vis_img
 
+def detect_copy_move_dct(pil_img: Image.Image) -> Tuple[bool, int]:
+    if not HAS_CV2:
+        return False, 0
+    gray = np.array(pil_img.convert("L"), dtype=np.float32)
+    h, w = gray.shape
+    block_size = 16
+    if h < block_size or w < block_size:
+        return False, 0
+        
+    features = []
+    coords = []
+    for y in range(0, h - block_size + 1, block_size):
+        for x in range(0, w - block_size + 1, block_size):
+            blk = gray[y:y+block_size, x:x+block_size]
+            dct_blk = cv2.dct(blk)
+            feat = dct_blk.flatten()[1:]
+            norm = np.linalg.norm(feat)
+            if norm > 1e-5:
+                feat = feat / norm
+            features.append(feat)
+            coords.append((x, y))
+            
+    if not features:
+        return False, 0
+        
+    features = np.array(features, dtype=np.float32)
+    coords = np.array(coords, dtype=np.float32)
+    
+    match_count = 0
+    n = len(features)
+    for i in range(n):
+        sims = np.dot(features[i+1:], features[i])
+        high_sim_idx = np.where(sims > 0.98)[0]
+        for j_idx in high_sim_idx:
+            j = i + 1 + j_idx
+            dist = np.linalg.norm(coords[i] - coords[j])
+            if dist > 50:
+                match_count += 1
+                if match_count > 100: # Cap to avoid huge loops
+                    break
+        if match_count > 100:
+            break
+                
+    detected = match_count > 8
+    return detected, match_count
 
 # ============================================================================
 # 3. JPEG Ghosts (Double Compression Sweeper)
@@ -182,6 +235,11 @@ def analyze_dqt_tables(raw_bytes: bytes) -> Tuple[bool, Optional[str], Optional[
         if pos == -1 or pos + 4 > len(raw_bytes):
             break
         length = int.from_bytes(raw_bytes[pos + 2 : pos + 4], byteorder="big")
+        # Guard against malformed segments with length=0 or impossibly small
+        # values that would cause the loop to stall or go backwards.
+        if length < 3:
+            pos += 2
+            continue
         payload = raw_bytes[pos + 4 : pos + 2 + length]
         if len(payload) >= 65:
             table_id = payload[0] & 0x0F
@@ -341,14 +399,17 @@ def analyze_illumination_consistency(pil_img: Image.Image) -> Tuple[float, bool]
     magnitude = np.sqrt(gx**2 + gy**2)
     angles = np.arctan2(gy, gx)
 
-    mid_y, mid_x = h // 2, w // 2
+    # magnitude and angles are shape (h-2, w-2).  Use (h-2) and (w-2) for
+    # the quad split so slices stay within bounds.
+    mh, mw = magnitude.shape
+    mid_y, mid_x = mh // 2, mw // 2
     quad_angles = []
 
     quads = [
         (slice(0, mid_y), slice(0, mid_x)),
-        (slice(0, mid_y), slice(mid_x, w)),
-        (slice(mid_y, h), slice(0, mid_x)),
-        (slice(mid_y, h), slice(mid_x, w)),
+        (slice(0, mid_y), slice(mid_x, mw)),
+        (slice(mid_y, mh), slice(0, mid_x)),
+        (slice(mid_y, mh), slice(mid_x, mw)),
     ]
 
     for sy, sx in quads:
@@ -400,6 +461,66 @@ def analyze_noise_consistency(pil_img: Image.Image) -> float:
     return 0.0
 
 
+def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True) -> Tuple[bool, float, Optional[str]]:
+    gray = np.array(pil_img.convert("L"), dtype=np.float32)
+    h, w = gray.shape
+    block_size = 64
+    
+    variances = []
+    var_map = []
+    
+    for y in range(0, h - block_size + 1, block_size):
+        row_vars = []
+        for x in range(0, w - block_size + 1, block_size):
+            blk = gray[y:y+block_size, x:x+block_size]
+            lap = cv2.Laplacian(blk, cv2.CV_64F) if HAS_CV2 else blk # simplified if no cv2, but cv2 is HAS_CV2
+            var = np.var(lap) if HAS_CV2 else np.var(blk)
+            row_vars.append(var)
+            variances.append(var)
+        var_map.append(row_vars)
+        
+    if not variances:
+        return False, 0.0, None
+        
+    mean_v = np.mean(variances)
+    std_v = np.std(variances)
+    ratio = std_v / (mean_v + 1e-6)
+    
+    detected = bool(ratio > 1.2)
+    confidence = float(min(100.0, float(ratio) * 40.0))
+    
+    b64_img = None
+    if generate_visuals and var_map:
+        var_map_arr = np.array(var_map)
+        mn, mx = np.min(var_map_arr), np.max(var_map_arr)
+        
+        hm_w = len(var_map[0])
+        hm_h = len(var_map)
+        scale = 4
+        img = Image.new("RGB", (hm_w * scale, hm_h * scale))
+        draw = ImageDraw.Draw(img)
+        
+        for r in range(hm_h):
+            for c in range(hm_w):
+                v = var_map_arr[r, c]
+                norm_v = (v - mn) / (mx - mn + 1e-6)
+                if norm_v < 0.5:
+                    r_col = 0
+                    g_col = int(norm_v * 2 * 255)
+                    b_col = int((1 - norm_v * 2) * 255)
+                else:
+                    r_col = int((norm_v - 0.5) * 2 * 255)
+                    g_col = int((1 - (norm_v - 0.5) * 2) * 255)
+                    b_col = 0
+                
+                x0, y0 = c * scale, r * scale
+                x1, y1 = x0 + scale, y0 + scale
+                draw.rectangle([x0, y0, x1, y1], fill=(r_col, g_col, b_col))
+                
+        b64_img = numpy_to_base64_png(np.array(img))
+        
+    return detected, confidence, b64_img
+
 # ============================================================================
 # Master Tampering & Deep Forensic Orchestrator
 # ============================================================================
@@ -416,20 +537,42 @@ def analyze_tampering(
         return report
 
     try:
+        orig_pil_img = pil_img
+        w, h = pil_img.width, pil_img.height
+        if w * h > 4_000_000:
+            max_dim = 2000
+            scale = min(max_dim / w, max_dim / h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+            report.findings.append("Image downsampled to max 2000px for expensive operations.")
+
         # 1. Error Level Analysis (ELA)
-        ela_vis, m_diff, mx_diff, s_diff, ela_score = perform_ela(pil_img, quality=ela_quality)
+        ela_vis, m_diff, mx_diff, s_diff, ela_score, ela_note = perform_ela(orig_pil_img, quality=ela_quality)
         report.ela_performed = True
         report.ela_difference_mean = round(m_diff, 3)
         report.ela_difference_max = round(mx_diff, 3)
         report.ela_difference_std = round(s_diff, 3)
         report.ela_suspicion_score = ela_score
+        if hasattr(report, 'ela_confidence'):
+            report.ela_confidence = min(100.0, ela_score * 1.5)
+        if ela_note:
+            report.findings.append(ela_note)
         if generate_visuals:
             report.ela_b64_image = numpy_to_base64_png(ela_vis)
 
         # 2. Copy-Move (Cloning) Detection
-        cm_detected, cm_count, cm_vis = detect_copy_move(pil_img)
+        cm_detected, cm_count, cm_vis = detect_copy_move(orig_pil_img)
+        if not cm_detected and cm_count == 0:
+            dct_detected, dct_count = detect_copy_move_dct(orig_pil_img)
+            if dct_detected:
+                cm_detected = True
+                cm_count = dct_count
+                
         report.copy_move_detected = cm_detected
         report.copy_move_match_count = cm_count
+        if hasattr(report, 'copy_move_confidence'):
+            report.copy_move_confidence = min(95, 20 + cm_count * 3)
+            
         if cm_vis is not None and generate_visuals:
             report.copy_move_b64_image = numpy_to_base64_png(cm_vis)
         if cm_detected:
@@ -507,7 +650,22 @@ def analyze_tampering(
         if is_screenshot:
             report.findings.append("Digital UI Screen Capture detected: physical camera sensor tests (Bayer CFA, Chromatic Aberration) suppressed.")
 
+        # Splice Detection
+        if not is_screenshot and (orig_pil_img.format == 'JPEG' or (w >= 200 and h >= 200)):
+            splice_det, splice_conf, splice_vis = analyze_splice_detection(orig_pil_img, generate_visuals)
+            if hasattr(report, 'splice_detected'):
+                report.splice_detected = splice_det
+                report.splice_confidence = splice_conf
+                if splice_vis:
+                    report.splice_b64_image = splice_vis
+            if splice_det:
+                report.findings.append(f"Image splicing / local composition detected (Confidence: {splice_conf:.1f}%).")
+                if hasattr(report, 'detected_regions'):
+                    report.detected_regions.append({"x": 0, "y": 0, "w": w, "h": h, "type": "splice_candidate", "confidence": splice_conf})
+
         # Composite Forensic Scoring
+        # Use the report fields (which already have screenshot suppression applied)
+        # instead of the raw local variables to stay consistent.
         if is_screenshot:
             composite_score = (
                 (ela_score * 0.20)
@@ -517,12 +675,12 @@ def analyze_tampering(
             composite_score = (
                 (ela_score * 0.25)
                 + (40.0 if cm_detected else 0.0)
-                + (30.0 if ghost_det else 0.0)
-                + (25.0 if cfa_det else 0.0)
-                + (25.0 if grid_shifted else 0.0)
-                + (20.0 if ca_det else 0.0)
-                + (15.0 if mf_det else 0.0)
-                + (15.0 if illum_det else 0.0)
+                + (30.0 if report.jpeg_ghosts_detected else 0.0)
+                + (25.0 if report.cfa_tampering_detected else 0.0)
+                + (25.0 if report.block_grid_shifted else 0.0)
+                + (20.0 if report.chromatic_aberration_detected else 0.0)
+                + (15.0 if report.median_filter_detected else 0.0)
+                + (15.0 if report.illumination_conflict_detected else 0.0)
             )
 
         if composite_score >= 60.0 or cm_detected or (ghost_det and not is_screenshot):

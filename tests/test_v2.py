@@ -176,6 +176,17 @@ class TestLensintV2Forensics(unittest.TestCase):
         self.assertIn("LENSINT", html_out)
         self.assertIn("Courtroom-Grade Tampering", html_out)
 
+    def test_08_screenshot_contextualization(self):
+        # 1920x1080 standard desktop screenshot simulation
+        img = Image.new("RGB", (1920, 1080), color=(240, 240, 240))
+        p = os.path.join(self.tmp_dir, "screenshot_test.png")
+        img.save(p, format="PNG")
+
+        res = ImageAnalyzer(p).analyze()
+        self.assertTrue(res.integrity.is_screenshot)
+        self.assertEqual(res.overall_risk_level, "CLEAN")
+        self.assertEqual(res.overall_risk_score, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

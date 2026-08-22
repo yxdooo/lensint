@@ -408,6 +408,7 @@ def analyze_tampering(
     raw_bytes: bytes = b"",
     ela_quality: int = 90,
     generate_visuals: bool = True,
+    is_screenshot: bool = False,
 ) -> TamperingReport:
     report = TamperingReport()
     if pil_img is None:
@@ -436,12 +437,12 @@ def analyze_tampering(
 
         # 3. JPEG Ghosts & Double Compression
         ghost_det, ghost_quals, ghost_score, ghost_vis = analyze_jpeg_ghosts(pil_img)
-        report.jpeg_ghosts_detected = ghost_det
+        report.jpeg_ghosts_detected = ghost_det and not is_screenshot
         report.jpeg_ghost_qualities = ghost_quals
         report.jpeg_ghost_difference_score = ghost_score
         if ghost_vis is not None and generate_visuals:
             report.jpeg_ghost_b64_image = numpy_to_base64_png(ghost_vis)
-        if ghost_det:
+        if ghost_det and not is_screenshot:
             report.findings.append(f"JPEG Ghosts / Double compression detected (Quality variance: {ghost_quals}).")
 
         # 4. DQT Quantization Table Forensics
@@ -455,58 +456,76 @@ def analyze_tampering(
             report.findings.append(f"DQT Quantization signature matches: {dqt_enc} (Est. Quality: {dqt_q}%).")
 
         # 5. CFA / Bayer Demosaicing
-        cfa_score, cfa_det = analyze_cfa_demosaicing(pil_img)
-        report.cfa_inconsistency_score = cfa_score
-        report.cfa_tampering_detected = cfa_det
-        if cfa_det:
-            report.findings.append(f"CFA Bayer demosaicing anomaly detected (Score: {cfa_score}/100). Splicing suspected.")
+        if is_screenshot:
+            report.sensor_heuristics_suppressed = True
+            report.cfa_inconsistency_score = 0.0
+            report.cfa_tampering_detected = False
+        else:
+            cfa_score, cfa_det = analyze_cfa_demosaicing(pil_img)
+            report.cfa_inconsistency_score = cfa_score
+            report.cfa_tampering_detected = cfa_det
+            if cfa_det:
+                report.findings.append(f"CFA Bayer demosaicing anomaly detected (Score: {cfa_score}/100). Splicing suspected.")
 
         # 6. 8x8 DCT Block Grid Shift
         grid_shifted, grid_phase, bag_score = analyze_block_grid_inconsistency(pil_img)
-        report.block_grid_shifted = grid_shifted
+        report.block_grid_shifted = grid_shifted and not is_screenshot
         report.block_grid_offset = grid_phase
         report.block_artifact_score = bag_score
-        if grid_shifted:
+        if grid_shifted and not is_screenshot:
             report.findings.append(f"8x8 DCT block grid phase shift detected (Offset: {grid_phase}). Pasted patch misaligned.")
 
         # 7. Chromatic Aberration
-        ca_score, ca_det = analyze_chromatic_aberration(pil_img)
-        report.chromatic_aberration_inconsistency = ca_score
-        report.chromatic_aberration_detected = ca_det
-        if ca_det:
-            report.findings.append(f"Chromatic aberration radial vector anomaly detected (Score: {ca_score}/100). Composite lens optics.")
+        if is_screenshot:
+            report.chromatic_aberration_inconsistency = 0.0
+            report.chromatic_aberration_detected = False
+        else:
+            ca_score, ca_det = analyze_chromatic_aberration(pil_img)
+            report.chromatic_aberration_inconsistency = ca_score
+            report.chromatic_aberration_detected = ca_det
+            if ca_det:
+                report.findings.append(f"Chromatic aberration radial vector anomaly detected (Score: {ca_score}/100). Composite lens optics.")
 
         # 8. Median Filtering / Anti-Forensic Smoothing
         mf_det, mf_score = analyze_median_filtering(pil_img)
-        report.median_filter_detected = mf_det
+        report.median_filter_detected = mf_det and not is_screenshot
         report.median_filter_score = mf_score
-        if mf_det:
+        if mf_det and not is_screenshot:
             report.findings.append(f"Median filter / Edge smoothing detected (Score: {mf_score}/100). Anti-forensic concealment.")
 
         # 9. Illumination Consistency
         illum_score, illum_det = analyze_illumination_consistency(pil_img)
         report.illumination_variance_score = illum_score
-        report.illumination_conflict_detected = illum_det
-        if illum_det:
+        report.illumination_conflict_detected = illum_det and not is_screenshot
+        if illum_det and not is_screenshot:
             report.findings.append(f"Illumination & lighting angle conflict detected (Score: {illum_score}/100). Inconsistent lighting sources.")
 
         # 10. Sensor Noise Variance
-        noise_score = analyze_noise_consistency(pil_img)
+        noise_score = analyze_noise_consistency(pil_img) if not is_screenshot else 0.0
         report.noise_inconsistency_score = noise_score
 
-        # Composite Forensic Scoring
-        composite_score = (
-            (ela_score * 0.25)
-            + (40.0 if cm_detected else 0.0)
-            + (30.0 if ghost_det else 0.0)
-            + (25.0 if cfa_det else 0.0)
-            + (25.0 if grid_shifted else 0.0)
-            + (20.0 if ca_det else 0.0)
-            + (15.0 if mf_det else 0.0)
-            + (15.0 if illum_det else 0.0)
-        )
+        if is_screenshot:
+            report.findings.append("Digital UI Screen Capture detected: physical camera sensor tests (Bayer CFA, Chromatic Aberration) suppressed.")
 
-        if composite_score >= 60.0 or cm_detected or ghost_det:
+        # Composite Forensic Scoring
+        if is_screenshot:
+            composite_score = (
+                (ela_score * 0.20)
+                + (40.0 if cm_detected else 0.0)
+            )
+        else:
+            composite_score = (
+                (ela_score * 0.25)
+                + (40.0 if cm_detected else 0.0)
+                + (30.0 if ghost_det else 0.0)
+                + (25.0 if cfa_det else 0.0)
+                + (25.0 if grid_shifted else 0.0)
+                + (20.0 if ca_det else 0.0)
+                + (15.0 if mf_det else 0.0)
+                + (15.0 if illum_det else 0.0)
+            )
+
+        if composite_score >= 60.0 or cm_detected or (ghost_det and not is_screenshot):
             report.suspicion_level = "HIGH"
             report.findings.append(f"High digital manipulation probability (Courtroom-grade composite score: {min(100.0, composite_score):.1f}/100).")
         elif composite_score >= 30.0:

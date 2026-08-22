@@ -25,26 +25,25 @@ BENIGN_IMAGE_SEQUENCES = {
 }
 
 RE_SUSPICIOUS_COMMANDS = re.compile(
-    r"\b(?:"
-    r"powershell(?:\.exe)?|"
-    r"cmd(?:\.exe)?|"
-    r"/bin/(?:ba)?sh|"
-    r"certutil(?:\.exe)?|"
-    r"bitsadmin(?:\.exe)?|"
-    r"wget|curl|"
-    r"invoke-expression|iex|"
-    r"invoke-webrequest|iwr|"
-    r"eval\s*\(|"
-    r"exec\s*\(|"
-    r"base64_decode\s*\(|"
-    r"system\s*\(|"
-    r"passthru\s*\(|"
-    r"shell_exec\s*\(|"
-    r"wscript\.shell|"
-    r"rundll32(?:\.exe)?|"
-    r"regsvr32(?:\.exe)?|"
-    r"mshta(?:\.exe)?"
-    r")\b",
+    r"(?:"
+    r"\bpowershell(?:\.exe)?\s+-[a-zA-Z]+|\bpowershell\.exe\b|"
+    r"\bcmd(?:\.exe)?\s+/(?:c|k|r)|\bcmd\.exe\b|"
+    r"/bin/(?:ba)?sh|\b(?:bash|sh)\s+-[ce]|\b(?:bash|sh)\s+http|"
+    r"\bcertutil(?:\.exe)?\s+-[a-zA-Z]+|\bcertutil\.exe\b|"
+    r"\bbitsadmin(?:\.exe)?\s+/[a-zA-Z]+|"
+    r"\bwget\s+(?:-[a-zA-Z]|http)|\bcurl\s+(?:-[a-zA-Z]|http)|\bcurl\s*\||\bwget\s*\||"
+    r"\binvoke-expression|\biex\s*\(|\biex\s+\$|\binvoke-webrequest|\biwr\s+-[a-zA-Z]|"
+    r"\beval\s*\(|"
+    r"\bexec\s*\(|"
+    r"\bbase64_decode\s*\(|"
+    r"\bsystem\s*\(|"
+    r"\bpassthru\s*\(|"
+    r"\bshell_exec\s*\(|"
+    r"\bwscript\.shell|"
+    r"\brundll32(?:\.exe)?|"
+    r"\bregsvr32(?:\.exe)?|"
+    r"\bmshta(?:\.exe)?"
+    r")",
     re.IGNORECASE,
 )
 
@@ -83,7 +82,6 @@ def _is_valid_ipv4(ip_str: str) -> bool:
         ip = ipaddress.IPv4Address(ip_str)
         if ip.is_unspecified or ip.is_loopback or ip.is_reserved or ip.is_multicast:
             return False
-        # Filter out 255.255.255.255
         if ip_str == "255.255.255.255":
             return False
         return True
@@ -95,7 +93,6 @@ def _is_valid_base64_blob(b64_str: str) -> bool:
     if len(b64_str) % 4 != 0 or len(b64_str) < 20:
         return False
     
-    # Filter known JPEG Huffman tables
     if any(seq in b64_str for seq in BENIGN_IMAGE_SEQUENCES):
         return False
 
@@ -104,11 +101,9 @@ def _is_valid_base64_blob(b64_str: str) -> bool:
         if len(decoded) < 12:
             return False
         
-        # Check if decoded payload contains meaningful printable text or known headers
         printable_count = sum(1 for b in decoded if 32 <= b <= 126 or b in (9, 10, 13))
         ratio = printable_count / len(decoded)
         
-        # High printable text ratio or magic signatures (MZ, ELF, PK, etc.)
         if ratio >= 0.60 or decoded.startswith((b"MZ", b"\x7fELF", b"PK\x03\x04", b"{\"", b"<?xml", b"http", b"powershell")):
             return True
         return False

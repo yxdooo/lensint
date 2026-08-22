@@ -55,6 +55,7 @@ class ImageAnalyzer:
             raw_bytes=raw_bytes,
             ela_quality=self.ela_quality,
             generate_visuals=self.generate_visuals,
+            is_screenshot=result.integrity.is_screenshot,
         )
         result.stego = analyze_stego(raw_bytes, pil_img, generate_visuals=self.generate_visuals)
         result.strings = analyze_strings(raw_bytes, min_len=self.min_string_len)
@@ -74,6 +75,9 @@ class ImageAnalyzer:
     def _calculate_verdict(self, result: AnalysisResult) -> None:
         score = 0.0
         findings = []
+
+        if result.integrity.is_screenshot:
+            findings.append(f"Classified as {result.integrity.screen_capture_type or 'Digital Screen Capture'} (Camera sensor heuristics contextualized).")
 
         if result.malware.has_threats:
             score += 50.0

@@ -20,6 +20,8 @@ class IntegrityReport:
     dimensions: Optional[Tuple[int, int]] = None
     color_mode: str = ""
     has_alpha_channel: bool = False
+    is_screenshot: bool = False
+    screen_capture_type: Optional[str] = None
     anomalies: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -110,6 +112,9 @@ class TamperingReport:
 
     # 10. Laplacian Noise Variance
     noise_inconsistency_score: float = 0.0
+
+    # Contextual Flag
+    sensor_heuristics_suppressed: bool = False
 
     # Overall Verdict
     suspicion_level: str = "LOW"

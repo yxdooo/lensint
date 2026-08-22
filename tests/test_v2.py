@@ -9,7 +9,16 @@ from lensint.core.analyzer import ImageAnalyzer
 from lensint.core.models import AnalysisResult
 from lensint.modules.ai_detect import analyze_ai_generation, calculate_fft_spectrum
 from lensint.modules.malware_rules import analyze_malware_and_polyglots
-from lensint.modules.tampering import analyze_tampering
+from lensint.modules.tampering import (
+    analyze_tampering,
+    analyze_jpeg_ghosts,
+    analyze_dqt_tables,
+    analyze_cfa_demosaicing,
+    analyze_block_grid_inconsistency,
+    analyze_chromatic_aberration,
+    analyze_median_filtering,
+    analyze_illumination_consistency,
+)
 from lensint.modules.threat_intel import generate_threat_intel_links
 from lensint.reporters.html_rep import render_html_report
 from lensint.reporters.json_rep import render_json_report
@@ -76,7 +85,7 @@ class TestLensintV2Forensics(unittest.TestCase):
         self.assertTrue(mal_rep2.webshell_detected)
         self.assertTrue(mal_rep2.has_threats)
 
-    def test_04_tampering_and_ela(self):
+    def test_04_deep_courtroom_tampering_forensics(self):
         img = Image.new("RGB", (256, 256), color=(255, 255, 255))
         from PIL import ImageDraw
         draw = ImageDraw.Draw(img)
@@ -84,10 +93,45 @@ class TestLensintV2Forensics(unittest.TestCase):
             draw.rectangle([offset, 20, offset + 40, 60], fill=(20, 20, 20))
             draw.line([offset, 20, offset + 40, 60], fill=(255, 0, 0), width=3)
 
+        # 1. Full tampering master orchestrator
         tamp_rep = analyze_tampering(img)
         self.assertTrue(tamp_rep.ela_performed)
         self.assertIsInstance(tamp_rep.ela_suspicion_score, float)
         self.assertIsNotNone(tamp_rep.ela_b64_image)
+
+        # 2. JPEG Ghost Analysis
+        ghost_det, ghost_quals, ghost_score, ghost_vis = analyze_jpeg_ghosts(img)
+        self.assertIsInstance(ghost_det, bool)
+        self.assertIsInstance(ghost_score, float)
+
+        # 3. DQT Extraction
+        jpg_bytes = self.create_sample_jpeg()
+        dqt_found, dqt_enc, dqt_q, dqt_mismatch, dqt_tabs = analyze_dqt_tables(jpg_bytes)
+        self.assertTrue(dqt_found)
+        self.assertIn("Luminance", dqt_tabs)
+        self.assertIsInstance(dqt_q, int)
+
+        # 4. CFA Demosaicing
+        cfa_score, cfa_det = analyze_cfa_demosaicing(img)
+        self.assertIsInstance(cfa_score, float)
+        self.assertIsInstance(cfa_det, bool)
+
+        # 5. 8x8 DCT Block Grid
+        grid_shift, grid_offset, bag_score = analyze_block_grid_inconsistency(img)
+        self.assertIsInstance(grid_shift, bool)
+        self.assertEqual(len(grid_offset), 2)
+
+        # 6. Chromatic Aberration
+        ca_score, ca_det = analyze_chromatic_aberration(img)
+        self.assertIsInstance(ca_score, float)
+
+        # 7. Median Filtering
+        mf_det, mf_score = analyze_median_filtering(img)
+        self.assertIsInstance(mf_det, bool)
+
+        # 8. Illumination Consistency
+        illum_score, illum_det = analyze_illumination_consistency(img)
+        self.assertIsInstance(illum_score, float)
 
     def test_05_stego_overlay_extraction(self):
         jpeg_bytes = self.create_sample_jpeg()
@@ -122,13 +166,15 @@ class TestLensintV2Forensics(unittest.TestCase):
         json_out = render_json_report(res)
         parsed = json.loads(json_out)
         self.assertEqual(parsed["integrity"]["detected_format"], "PNG")
-        self.assertIn("ai_detection", parsed)
-        self.assertIn("malware", parsed)
-        self.assertIn("threat_intel", parsed)
+        self.assertIn("tampering", parsed)
+        self.assertIn("jpeg_ghosts_detected", parsed["tampering"])
+        self.assertIn("dqt_identified_encoder", parsed["tampering"])
+        self.assertIn("cfa_inconsistency_score", parsed["tampering"])
 
         html_out = render_html_report(res)
         self.assertIn("<!DOCTYPE html>", html_out)
         self.assertIn("LENSINT", html_out)
+        self.assertIn("Courtroom-Grade Tampering", html_out)
 
 
 if __name__ == "__main__":

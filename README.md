@@ -5,14 +5,15 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-REST%20API-009688.svg)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](Dockerfile)
 
-**Lensint** is a modular, high-precision digital image forensics, AI/Deepfake detection, and cybersecurity threat intelligence framework. Engineered for security researchers, incident responders, OSINT investigators, and forensic analysts, Lensint inspects digital images across multiple forensic dimensions to detect file tampering, steganographic carriers, hidden payloads, AI synthesis artifacts, camera/software footprints, and embedded indicators of compromise (IOCs).
+**Lensint** is a modular, high-precision digital image forensics, AI/Deepfake detection, and cybersecurity threat intelligence framework. Engineered for security researchers, incident responders, OSINT investigators, and courtroom-grade digital forensic analysts, Lensint inspects digital images across multiple forensic dimensions to expose localized tampering, cloning, steganographic carriers, hidden payloads, synthetic AI generation, and camera/software footprints.
 
 ---
 
 ## Table of Contents
 
 - [Core Forensic Modules](#core-forensic-modules)
-- [Methodology & Algorithms](#methodology--algorithms)
+- [Courtroom-Grade Tampering & Manipulation Analysis](#courtroom-grade-tampering--manipulation-analysis)
+- [Mathematical & Algorithmic Foundations](#mathematical--algorithmic-foundations)
 - [Installation](#installation)
 - [CLI Usage & Examples](#cli-usage--examples)
 - [Headless REST API](#headless-rest-api)
@@ -25,14 +26,14 @@
 
 ## Core Forensic Modules
 
-1. **File Integrity & Container Validation**:
-   - Cryptographic hashing: `MD5`, `SHA-1`, `SHA-256`, and `SHA-512`.
+1. **File Integrity & Cryptographic Hashes**:
+   - Multi-algorithm cryptographic hashing: `MD5`, `SHA-1`, `SHA-256`, and `SHA-512`.
    - Magic byte container validation (`JPEG`, `PNG`, `GIF`, `WebP`, `BMP`, `TIFF`).
-   - Extension spoofing detection (detecting executable or script payloads disguised with image extensions).
+   - Extension spoofing detection (e.g., executable or script payloads disguised as image files).
    - Container structure verification (detecting corrupted, damaged, or truncated headers).
 
 2. **Metadata & Geolocation OSINT**:
-   - Deep EXIF IFD tag extraction (Camera make/model, serial numbers, lens profiles, exposure, ISO, flash, metering).
+   - Comprehensive EXIF IFD tag extraction (Camera make/model, serial numbers, lens profiles, exposure, ISO, flash, metering).
    - GPS coordinate extraction with DMS-to-Decimal conversion and direct OpenStreetMap / Google Maps integration.
    - Reverse Geocoding: Automated physical address resolution via OpenStreetMap Nominatim API.
    - Software Footprinting: Tracing editing tools (Adobe Photoshop, Lightroom, GIMP, Canva, Snapseed, VSCO) and AI generation workflows.
@@ -43,46 +44,60 @@
    - **C2PA / Content Credentials**: Scans for Adobe Content Authenticity Initiative manifests and provenance markers.
    - **Prompt Parameter Extraction**: Extracts positive/negative prompts, seed, steps, sampler, CFG scale, and model hashes embedded by Stable Diffusion, ComfyUI, and Automatic1111.
 
-4. **Tampering & Copy-Move Forgery Detection**:
-   - **Error Level Analysis (ELA)**: Computes recompression difference matrices against calibrated JPEG quality levels to highlight localized modifications.
-   - **Copy-Move (Cloning) Detection**: Utilizes ORB (Oriented FAST and Rotated BRIEF) keypoint descriptor clustering and spatial distance filtering to expose duplicated and pasted elements.
-   - **Sensor Noise Consistency**: Evaluates local variance across high-pass Laplacian filters to detect splicing from disparate camera sensors.
-
-5. **Steganography & Carrier Extraction**:
+4. **Steganography & Carrier Extraction**:
    - **Trailing Overlay Detection**: Scans for appended payloads hidden beyond container EOF markers (`FF D9` for JPEG, `IEND` for PNG, `3B` for GIF).
    - **Automated Carrier Extraction**: Extracts and validates embedded file headers (ZIP, RAR, 7z, Executable PE/ELF, PDF, SQLite, PHP) hidden inside image bodies or LSB channels.
    - **LSB Shannon Entropy**: Measures entropy per color channel (Red, Green, Blue) to flag high-randomness stego carriers.
    - **Bit-Plane Slicing**: Visual extraction of individual bit planes (Plane 0 LSB through Plane 7 MSB).
 
-6. **Malware, WebShell & Polyglot Rules**:
+5. **Malware, WebShell & Polyglot Rules**:
    - Polyglot container identification: `GIFAR`, `PNG-PHP`, `JPEG-PHP`, `GIF-ZIP`, and `PNG-ZIP`.
    - WebShell signature hunting: Obfuscated PHP loaders (`eval` + `base64_decode` / `gzinflate`), dynamic command execution hooks, and cookie-based stego webshells.
    - Shellcode & Evasion: Detects x86/x64 NOP sleds, execve stack shellcode, and PowerShell AMSI bypass sequences.
 
-7. **IOC Threat Hunting & Intelligence**:
+6. **IOC Threat Hunting & Intelligence**:
    - Extraction of ASCII and UTF-16 strings with regex-based IOC extraction (IPv4, IPv6, URLs, `.onion` hidden services, Emails, Base64 blobs, shell execution keywords, crypto wallets).
    - Automated direct lookup links for VirusTotal, HybridAnalysis, AbuseIPDB, Shodan, and ThreatFox.
    - Direct reverse image search integration with Google Lens, Bing Visual Search, Yandex Images, and TinEye.
 
 ---
 
-## Methodology & Algorithms
+## Courtroom-Grade Tampering & Manipulation Analysis
+
+Lensint integrates 10 dedicated image manipulation analysis techniques to deliver verifiable forensic proof:
+
+| Forensic Method | Technique / Principle | Evidence Detected |
+| :--- | :--- | :--- |
+| **Error Level Analysis (ELA)** | Differential recompression matrix at calibrated quality | Localized compression variance from saved edits |
+| **Copy-Move (Cloning)** | ORB keypoint descriptor clustering & Euclidean distance | Duplicated/cloned regions pasted within same image |
+| **JPEG Ghosts** | Multi-quality compression sweeper ($Q \in [50..95]$) | Double compression & spliced elements from other JPEGs |
+| **DQT Quantization Forensics** | $8\times8$ Luminance/Chrominance table signature matching | Camera hardware vs Photoshop/GIMP encoder mismatch |
+| **CFA Demosaicing Analysis** | Residual variance across Bayer Color Filter Array pattern | Broken interpolation grid from splicing or inpainting |
+| **8x8 DCT Block Grid Shift** | Spatial energy distribution across 64 phase offsets | Pasted patches misaligned with background $8\times8$ grid |
+| **Chromatic Aberration** | Optical radial vector alignment relative to image center | Pasted objects photographed with a different physical lens |
+| **Median Filtering** | First-order pixel difference zero-ratio histogram | Anti-forensic smoothing used to conceal edit boundaries |
+| **Illumination Consistency** | Surface normal gradient vectors across quadrants | Conflicting primary light angles in composite photos |
+| **Sensor Noise Variance** | High-pass Laplacian filter local variance mapping | Foreign sensor noise from image splicing |
+
+---
+
+## Mathematical & Algorithmic Foundations
 
 ### 1. 2D Fast Fourier Transform (FFT) Power Spectrum
-Digital camera sensors produce smooth, natural frequency decay across radial distributions. Diffusion models (such as Stable Diffusion) generate images in latent space and upsample them through transposed convolutions, leaving characteristic periodic high-frequency grid spikes:
+Natural camera sensors exhibit smooth frequency decay across radial distributions. Latent diffusion models introduce periodic high-frequency grid spikes during transposed convolutional upsampling:
 
 $$\mathcal{F}(u, v) = \sum_{x=0}^{M-1} \sum_{y=0}^{N-1} f(x, y) e^{-j 2\pi \left(\frac{ux}{M} + \frac{vy}{N}\right)}$$
 
 Lensint computes the log magnitude spectrum $\log(|\mathcal{F}(u, v)| + 1)$ and calculates the radial peak-to-noise ratio in the high-frequency band ($0.25 < r < 0.48$) to detect synthetic generation.
 
-### 2. Error Level Analysis (ELA)
-When an image is saved in a lossy format (JPEG), each $8\times8$ DCT block is quantized at a uniform compression rate. Modifying a localized region introduces compression discrepancy:
+### 2. JPEG Ghost Double-Compression Detection
+When an image region originally compressed at quality $Q_a$ is pasted into a background compressed at $Q_b$, recompressing the composite image across qualities $q \in [1..100]$ minimizes difference at the original compression point:
 
-$$\Delta(x, y) = |I_{\text{original}}(x, y) - I_{\text{recompressed}}(x, y)| \times \alpha$$
+$$D(x, y, q) = |I(x, y) - I_q(x, y)|$$
 
-Lensint measures the standard deviation and 95th percentile block discrepancy to calculate an objective tampering score.
+Regions reaching their local minimum difference at distinctly different $q$ values provide mathematical proof of composite splicing.
 
-### 3. Shannon Entropy for LSB Steganography
+### 3. Shannon Entropy for Steganography
 Unmodified natural images exhibit lower entropy in their least significant bits. Injected encrypted or compressed payloads approach maximum randomness (8.0 bits per byte):
 
 $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
@@ -220,7 +235,7 @@ lensint/
 │   ├── integrity.py        # Magic bytes, MIME, and cryptographic hashing
 │   ├── metadata.py         # EXIF, XMP, IPTC, and software footprinting
 │   ├── ai_detect.py        # 2D FFT spectral analysis & C2PA / diffusion prompts
-│   ├── tampering.py        # Error Level Analysis & ORB Copy-Move forgery
+│   ├── tampering.py        # Deep tampering: ELA, Copy-Move, JPEG Ghosts, DQT, CFA, Grid, CA, Median, Lighting
 │   ├── stego.py            # Overlay detection, LSB entropy, payload extraction
 │   ├── malware_rules.py    # Polyglot, WebShell, and shellcode detection
 │   ├── strings_scan.py     # String extraction and IOC threat hunting

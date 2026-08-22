@@ -28,6 +28,7 @@ def render_html_report(result: AnalysisResult) -> str:
     wallets_html = "".join(f"<span class='ioc-tag ioc-wallet'>{w}</span>" for w in iocs["crypto_wallets"]) or "<span class='dim'>None</span>"
 
     ela_img = f"<img src='{result.tampering.ela_b64_image}' class='preview-img' />" if result.tampering.ela_b64_image else "<div class='no-img'>N/A</div>"
+    ghost_img = f"<img src='{result.tampering.jpeg_ghost_b64_image}' class='preview-img' />" if result.tampering.jpeg_ghost_b64_image else ""
     fft_img = f"<img src='{result.ai_detection.fft_b64_image}' class='preview-img' />" if result.ai_detection.fft_b64_image else "<div class='no-img'>N/A</div>"
     cm_img = f"<img src='{result.tampering.copy_move_b64_image}' class='preview-img' />" if result.tampering.copy_move_b64_image else "<div class='no-img'>No Cloning Detected</div>"
 
@@ -44,6 +45,8 @@ def render_html_report(result: AnalysisResult) -> str:
     if result.metadata.gps_info:
         geo_name = result.metadata.reverse_geocode.get("display_name", "N/A") if result.metadata.reverse_geocode else "N/A"
         geo_html = f"<tr><td class='key-cell'>Physical Address</td><td class='val-cell'>{geo_name}</td></tr>"
+
+    dqt_desc = result.tampering.dqt_identified_encoder or "Standard Non-JPEG / Custom Tables"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -146,7 +149,7 @@ body {{
   </div>
 
   <div class="card">
-    <div class="card-title">Key Forensic Findings & Summary</div>
+    <div class="card-title">Key Forensic Findings & Verdict Summary</div>
     <ul class="findings-list">{findings_html}</ul>
   </div>
 
@@ -182,17 +185,25 @@ body {{
         <tr><td class="key-cell">AI Verdict</td><td class="val-cell"><b>{result.ai_detection.ai_verdict}</b> (Score: {result.ai_detection.ai_probability_score}/100)</td></tr>
         <tr><td class="key-cell">AI Generator</td><td class="val-cell">{result.ai_detection.ai_generator_name or 'None'}</td></tr>
         <tr><td class="key-cell">C2PA Credentials</td><td class="val-cell">{', '.join(result.ai_detection.c2pa_markers) if result.ai_detection.c2pa_present else 'None'}</td></tr>
+        <tr><td class="key-cell">2D FFT Spectral Score</td><td class="val-cell">{result.ai_detection.fft_spectral_score}/100.0 (Peak Ratio: {result.ai_detection.fft_peak_ratio})</td></tr>
       </table>
       {fft_img}
     </div>
 
     <div class="card">
-      <div class="card-title">4. Tampering & Copy-Move Forgery</div>
+      <div class="card-title">4. Courtroom-Grade Tampering & Forgery Forensics</div>
       <table class="table" style="margin-bottom: 12px;">
-        <tr><td class="key-cell">ELA Score</td><td class="val-cell">{result.tampering.ela_suspicion_score}/100.0 (Suspicion: {result.tampering.suspicion_level})</td></tr>
+        <tr><td class="key-cell">ELA Disparity Score</td><td class="val-cell">{result.tampering.ela_suspicion_score}/100.0 (Suspicion: {result.tampering.suspicion_level})</td></tr>
         <tr><td class="key-cell">Copy-Move Cloning</td><td class="val-cell">{'DETECTED' if result.tampering.copy_move_detected else 'Clean'} ({result.tampering.copy_move_match_count} pairs)</td></tr>
+        <tr><td class="key-cell">JPEG Ghosts (Double Comp)</td><td class="val-cell">{'DETECTED (Qualities: ' + str(result.tampering.jpeg_ghost_qualities) + ')' if result.tampering.jpeg_ghosts_detected else 'Single Compression Uniformity'}</td></tr>
+        <tr><td class="key-cell">DQT Table Signature</td><td class="val-cell">{dqt_desc}</td></tr>
+        <tr><td class="key-cell">CFA Bayer Demosaicing</td><td class="val-cell">{'ANOMALY (' + str(result.tampering.cfa_inconsistency_score) + '/100)' if result.tampering.cfa_tampering_detected else str(result.tampering.cfa_inconsistency_score) + '/100 (Natural Grid)'}</td></tr>
+        <tr><td class="key-cell">8x8 DCT Block Grid Phase</td><td class="val-cell">{'SHIFTED (Offset: ' + str(result.tampering.block_grid_offset) + ')' if result.tampering.block_grid_shifted else 'Aligned (0,0)'}</td></tr>
+        <tr><td class="key-cell">Chromatic Aberration Vector</td><td class="val-cell">{'MISMATCH (' + str(result.tampering.chromatic_aberration_inconsistency) + '/100)' if result.tampering.chromatic_aberration_detected else str(result.tampering.chromatic_aberration_inconsistency) + '/100 (Radial Convergence)'}</td></tr>
+        <tr><td class="key-cell">Median Filter / Smoothing</td><td class="val-cell">{'DETECTED (' + str(result.tampering.median_filter_score) + '/100)' if result.tampering.median_filter_detected else 'Unsmoothed'}</td></tr>
+        <tr><td class="key-cell">Illumination Direction</td><td class="val-cell">{'CONFLICT (' + str(result.tampering.illumination_variance_score) + '/100)' if result.tampering.illumination_conflict_detected else 'Coherent Light Angle'}</td></tr>
       </table>
-      {cm_img if result.tampering.copy_move_detected else ela_img}
+      {ghost_img or cm_img or ela_img}
     </div>
   </div>
 

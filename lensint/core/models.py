@@ -61,16 +61,57 @@ class MetadataReport:
 
 @dataclass
 class TamperingReport:
+    # 1. Error Level Analysis
     ela_performed: bool = False
     ela_difference_mean: float = 0.0
     ela_difference_max: float = 0.0
     ela_difference_std: float = 0.0
     ela_suspicion_score: float = 0.0
     ela_b64_image: Optional[str] = None
-    noise_inconsistency_score: float = 0.0
+
+    # 2. Copy-Move (Cloning) Detection
     copy_move_detected: bool = False
     copy_move_match_count: int = 0
     copy_move_b64_image: Optional[str] = None
+
+    # 3. JPEG Ghosts (Double Compression)
+    jpeg_ghosts_detected: bool = False
+    jpeg_ghost_qualities: List[int] = field(default_factory=list)
+    jpeg_ghost_difference_score: float = 0.0
+    jpeg_ghost_b64_image: Optional[str] = None
+
+    # 4. DQT Quantization Table Forensics
+    dqt_found: bool = False
+    dqt_identified_encoder: Optional[str] = None
+    dqt_quality_estimate: Optional[int] = None
+    dqt_hardware_mismatch: bool = False
+    dqt_tables: Dict[str, List[int]] = field(default_factory=dict)
+
+    # 5. CFA / Bayer Demosaicing Inconsistency
+    cfa_inconsistency_score: float = 0.0
+    cfa_tampering_detected: bool = False
+
+    # 6. 8x8 DCT Block Grid Alignment
+    block_grid_shifted: bool = False
+    block_grid_offset: Tuple[int, int] = (0, 0)
+    block_artifact_score: float = 0.0
+
+    # 7. Chromatic Aberration Radial Vector Variance
+    chromatic_aberration_inconsistency: float = 0.0
+    chromatic_aberration_detected: bool = False
+
+    # 8. Median Filtering / Smoothing Artifacts
+    median_filter_detected: bool = False
+    median_filter_score: float = 0.0
+
+    # 9. Illumination & Lighting Vector Inconsistency
+    illumination_variance_score: float = 0.0
+    illumination_conflict_detected: bool = False
+
+    # 10. Laplacian Noise Variance
+    noise_inconsistency_score: float = 0.0
+
+    # Overall Verdict
     suspicion_level: str = "LOW"
     findings: List[str] = field(default_factory=list)
 

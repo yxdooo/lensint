@@ -32,25 +32,30 @@ class ImageAnalyzer:
     def analyze(self) -> AnalysisResult:
         result = AnalysisResult()
         result.target_path = self.file_path
-        result.timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        result.timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         pil_img, raw_bytes, load_err = load_image_safe(self.file_path)
         if raw_bytes is None:
-            err_msg = load_err if load_err else 'Unable to access target file.'
-            result.summary_findings.append(f'Fatal read error: {err_msg}')
+            err_msg = load_err if load_err else "Unable to access target file."
+            result.summary_findings.append(f"Fatal read error: {err_msg}")
             result.overall_risk_score = 100.0
-            result.overall_risk_level = 'CRITICAL'
+            result.overall_risk_level = "CRITICAL"
             return result
 
         result.integrity = analyze_integrity(self.file_path, raw_bytes, pil_img)
         result.metadata = analyze_metadata(raw_bytes, pil_img)
 
         if self.perform_geolookup and result.metadata.gps_info:
-            lat = result.metadata.gps_info['latitude']
-            lon = result.metadata.gps_info['longitude']
+            lat = result.metadata.gps_info["latitude"]
+            lon = result.metadata.gps_info["longitude"]
             result.metadata.reverse_geocode = reverse_geocode(lat, lon)
 
-        result.tampering = analyze_tampering(pil_img, ela_quality=self.ela_quality, generate_visuals=self.generate_visuals)
+        result.tampering = analyze_tampering(
+            pil_img,
+            raw_bytes=raw_bytes,
+            ela_quality=self.ela_quality,
+            generate_visuals=self.generate_visuals,
+        )
         result.stego = analyze_stego(raw_bytes, pil_img, generate_visuals=self.generate_visuals)
         result.strings = analyze_strings(raw_bytes, min_len=self.min_string_len)
         result.ai_detection = analyze_ai_generation(raw_bytes, pil_img, generate_visuals=self.generate_visuals)
@@ -58,9 +63,9 @@ class ImageAnalyzer:
 
         result.threat_intel = generate_threat_intel_links(
             sha256_hash=result.integrity.sha256,
-            ips=result.strings.iocs_detected['ipv4'],
-            domains=result.strings.iocs_detected['urls'],
-            urls=result.strings.iocs_detected['urls'],
+            ips=result.strings.iocs_detected["ipv4"],
+            domains=result.strings.iocs_detected["urls"],
+            urls=result.strings.iocs_detected["urls"],
         )
 
         self._calculate_verdict(result)
@@ -72,76 +77,109 @@ class ImageAnalyzer:
 
         if result.malware.has_threats:
             score += 50.0
-            for tf in result.malware.findings: findings.append(tf)
+            for tf in result.malware.findings:
+                findings.append(tf)
 
         if result.integrity.extension_mismatch:
             score += 40.0
-            findings.append('Disguised file format / Extension spoofing detected.')
+            findings.append("Disguised file format / Extension spoofing detected.")
 
         if result.integrity.is_corrupt_or_truncated:
             score += 15.0
-            findings.append('Image structure is damaged or truncated.')
+            findings.append("Image structure is damaged or truncated.")
 
         if result.stego.has_overlay_data:
             score += 35.0
-            findings.append(f'Hidden trailing payload ({result.stego.overlay_size_bytes} bytes) found appended past image EOF.')
+            findings.append(f"Hidden trailing payload ({result.stego.overlay_size_bytes} bytes) found appended past image EOF.")
 
-        suspicious_sigs = [s for s in result.stego.embedded_signatures if s['offset'] > 0]
+        suspicious_sigs = [s for s in result.stego.embedded_signatures if s["offset"] > 0]
         if suspicious_sigs:
             score += 35.0
-            sig_names = ', '.join(list(set(s['signature'] for s in suspicious_sigs[:3])))
-            findings.append(f'Embedded payload/archive signatures discovered: {sig_names}.')
+            sig_names = ", ".join(list(set(s["signature"] for s in suspicious_sigs[:3])))
+            findings.append(f"Embedded payload/archive signatures discovered: {sig_names}.")
 
         if result.stego.extracted_payload_type:
             score += 35.0
-            findings.append(f'Carrier extraction: {result.stego.extracted_payload_type}.')
+            findings.append(f"Carrier extraction: {result.stego.extracted_payload_type}.")
 
         if result.stego.lsb_stego_detected:
             score += 25.0
-            findings.append('Abnormally high LSB entropy indicates active steganographic carrier.')
+            findings.append("Abnormally high LSB entropy indicates active steganographic carrier.")
 
+        # Deep Tampering Forensics
         if result.tampering.copy_move_detected:
             score += 35.0
-            findings.append(f'Copy-Move forgery detected ({result.tampering.copy_move_match_count} cloned keypoints).')
-        elif result.tampering.suspicion_level == 'HIGH':
-            score += 25.0
-            findings.append('High tampering probability (ELA disparity & noise variance).')
-        elif result.tampering.suspicion_level == 'MEDIUM':
-            score += 10.0
-            findings.append('Moderate compression variance suggests localized editing.')
+            findings.append(f"Copy-Move cloning detected ({result.tampering.copy_move_match_count} cloned keypoints).")
 
-        if result.ai_detection.ai_verdict == 'CONFIRMED_AI':
-            findings.append(f'AI Generated / Synthetic image confirmed ({result.ai_detection.ai_generator_name}).')
-        elif result.ai_detection.ai_verdict == 'HIGH_PROBABILITY_AI':
-            findings.append('AI Generation suspected (Characteristic diffusion FFT spectral grid spikes).')
+        if result.tampering.jpeg_ghosts_detected:
+            score += 30.0
+            findings.append(f"JPEG Ghosts / Double compression detected (Quality variance: {result.tampering.jpeg_ghost_qualities}).")
+
+        if result.tampering.cfa_tampering_detected:
+            score += 25.0
+            findings.append(f"CFA Bayer demosaicing anomaly detected (Score: {result.tampering.cfa_inconsistency_score}/100). Splicing suspected.")
+
+        if result.tampering.block_grid_shifted:
+            score += 25.0
+            findings.append(f"8x8 DCT block grid phase shift detected (Offset: {result.tampering.block_grid_offset}). Pasted patch misaligned.")
+
+        if result.tampering.chromatic_aberration_detected:
+            score += 20.0
+            findings.append(f"Chromatic aberration radial vector anomaly detected (Score: {result.tampering.chromatic_aberration_inconsistency}/100).")
+
+        if result.tampering.median_filter_detected:
+            score += 15.0
+            findings.append(f"Median filter / Anti-forensic smoothing detected (Score: {result.tampering.median_filter_score}/100).")
+
+        if result.tampering.illumination_conflict_detected:
+            score += 15.0
+            findings.append(f"Illumination & lighting angle conflict detected (Score: {result.tampering.illumination_variance_score}/100).")
+
+        if result.tampering.dqt_found and result.tampering.dqt_identified_encoder:
+            if "Adobe" in result.tampering.dqt_identified_encoder or "GIMP" in result.tampering.dqt_identified_encoder:
+                score += 15.0
+                findings.append(f"DQT Quantization fingerprint confirms software edit: {result.tampering.dqt_identified_encoder}.")
+
+        if result.tampering.suspicion_level == "HIGH" and not result.tampering.copy_move_detected and not result.tampering.jpeg_ghosts_detected:
+            score += 25.0
+            findings.append("High tampering probability (ELA disparity & noise variance).")
+        elif result.tampering.suspicion_level == "MEDIUM":
+            score += 10.0
+            findings.append("Moderate compression variance suggests localized editing.")
+
+        # AI Detection
+        if result.ai_detection.ai_verdict == "CONFIRMED_AI":
+            findings.append(f"AI Generated / Synthetic image confirmed ({result.ai_detection.ai_generator_name}).")
+        elif result.ai_detection.ai_verdict == "HIGH_PROBABILITY_AI":
+            findings.append("AI Generation suspected (Characteristic diffusion FFT spectral grid spikes).")
 
         if result.metadata.software_footprint_findings:
             score += 10.0
-            findings.append(f'Metadata confirms editing: {result.metadata.software_footprint_findings[0]}')
+            findings.append(f"Metadata confirms editing: {result.metadata.software_footprint_findings[0]}")
 
-        if result.strings.iocs_detected['shell_commands']:
+        if result.strings.iocs_detected["shell_commands"]:
             score += 35.0
-            cmds = ', '.join(result.strings.iocs_detected['shell_commands'][:3])
-            findings.append(f'Dangerous shell execution keywords detected: {cmds}.')
+            cmds = ", ".join(result.strings.iocs_detected["shell_commands"][:3])
+            findings.append(f"Dangerous shell execution keywords detected: {cmds}.")
 
-        b64_count = len(result.strings.iocs_detected['base64_blobs'])
+        b64_count = len(result.strings.iocs_detected["base64_blobs"])
         if b64_count > 0:
             score += 10.0
-            findings.append(f'{b64_count} encoded Base64 payload blob(s) discovered.')
+            findings.append(f"{b64_count} encoded Base64 payload blob(s) discovered.")
 
         result.overall_risk_score = round(min(100.0, score), 1)
         if result.overall_risk_score >= 70.0 or result.malware.has_threats:
-            result.overall_risk_level = 'CRITICAL'
+            result.overall_risk_level = "CRITICAL"
         elif result.overall_risk_score >= 45.0:
-            result.overall_risk_level = 'HIGH'
+            result.overall_risk_level = "HIGH"
         elif result.overall_risk_score >= 25.0:
-            result.overall_risk_level = 'ELEVATED'
+            result.overall_risk_level = "ELEVATED"
         elif result.overall_risk_score > 0.0:
-            result.overall_risk_level = 'LOW'
+            result.overall_risk_level = "LOW"
         else:
-            result.overall_risk_level = 'CLEAN'
+            result.overall_risk_level = "CLEAN"
 
         if not findings:
-            findings.append('No security threats, hidden payloads, or tampering indicators detected.')
+            findings.append("No security threats, hidden payloads, or tampering indicators detected.")
 
         result.summary_findings = findings

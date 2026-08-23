@@ -37,8 +37,13 @@ PROMPT_INJECTION_PATTERNS = [
 class NeuralDeepfakePipeline:
     """Inference runner for ONNX deepfake models with verified model manifest."""
 
-    def __init__(self, model_dir: Optional[str] = None):
-        self.model_dir = model_dir or os.path.expanduser("~/.lensint/models")
+    def __init__(self, model_dir: Optional[str] = None, model_path: Optional[str] = None):
+        if model_path:
+            self.model_dir = os.path.dirname(os.path.abspath(model_path))
+            self.model_file = os.path.basename(model_path)
+        else:
+            self.model_dir = model_dir or os.path.expanduser("~/.lensint/models")
+            self.model_file = "deepfake_detector.onnx"
         self.onnx_available = False
         self._check_onnx()
 
@@ -49,12 +54,29 @@ class NeuralDeepfakePipeline:
         except ImportError:
             self.onnx_available = False
 
+    def is_available(self) -> bool:
+        """Check if ONNX runtime is installed and model file exists."""
+        model_path = os.path.join(self.model_dir, self.model_file)
+        manifest_path = os.path.join(self.model_dir, "manifest.json")
+        return self.onnx_available and os.path.exists(model_path) and os.path.exists(manifest_path)
+
     def _load_manifest(self) -> Dict[str, Any]:
         manifest_path = os.path.join(self.model_dir, "manifest.json")
         if not os.path.exists(manifest_path):
             raise FileNotFoundError("AI Manifest file (manifest.json) is strictly required to run Neural ONNX inference.")
         with open(manifest_path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def predict(self, pil_img: Image.Image) -> Dict[str, Any]:
+        """Wrapper method for neural deepfake inference returning standardized status dictionary."""
+        res = self.predict_synthetic_probability(pil_img)
+        prob = float(res.get("heuristic_anomaly_score", 0.0)) / 100.0
+        return {
+            "status": "INFERRED" if "ONNX Neural Engine" in res.get("model_used", "") else "FALLBACK",
+            "deepfake_probability": round(prob, 4),
+            "model_used": res.get("model_used", "None"),
+            "anomalies": res.get("anomalies", []),
+        }
 
     def predict_synthetic_probability(self, pil_img: Image.Image) -> Dict[str, Any]:
         """Predict synthetic generation likelihood using ONNX model or fallback to heuristic anomaly scores.
@@ -274,10 +296,15 @@ def scan_prompt_injections(text_or_metadata: str) -> List[Dict[str, Any]]:
     for pattern, desc in PROMPT_INJECTION_PATTERNS:
         matches = pattern.findall(text_or_metadata)
         if matches:
+            first_match = matches[0]
+            if isinstance(first_match, tuple):
+                sample_text = " ".join(filter(None, first_match)) or text_or_metadata[:60]
+            else:
+                sample_text = str(first_match)
             hits.append({
                 "type": desc,
-                "sample": matches[0] if isinstance(matches[0], str) else text_or_metadata[:60],
-                "severity": "SUSPICIOUS", # Downgrade to suspicious since this can be benign text in screenshots
+                "sample": sample_text[:120],
+                "severity": "SUSPICIOUS",  # Suspicious since text may occur in benign UI screenshots
             })
 
     return hits

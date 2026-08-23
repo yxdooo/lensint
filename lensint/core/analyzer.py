@@ -64,6 +64,8 @@ class ImageAnalyzer:
         if "ai_detection" in d: _fill(result.ai_detection, d["ai_detection"])
         if "malware" in d:     _fill(result.malware, d["malware"])
         if "threat_intel" in d: _fill(result.threat_intel, d["threat_intel"])
+        if "ocr" in d:         _fill(result.ocr, d["ocr"])
+        if "fusion_telemetry" in d: result.fusion_telemetry = d["fusion_telemetry"]
         return result
 
     def analyze(self) -> AnalysisResult:

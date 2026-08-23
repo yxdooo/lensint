@@ -40,9 +40,10 @@ class TestTamperingModule(unittest.TestCase):
         arr[120:160, 120:160] = pattern
         img_dup = Image.fromarray(arr)
 
-        detected, count, vis_img = detect_copy_move(img_dup)
-        self.assertIsInstance(detected, bool)
-        self.assertIsInstance(count, int)
+        detected, count, vis_img = detect_copy_move(img_dup, min_matches=4)
+        self.assertTrue(detected)
+        self.assertGreaterEqual(count, 4)
+        self.assertIsNotNone(vis_img)
 
     def test_full_tampering_analysis(self):
         img = Image.new("RGB", (128, 128), color=(120, 120, 120))

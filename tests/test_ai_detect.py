@@ -26,7 +26,7 @@ class TestAIDetectModule(unittest.TestCase):
 
     def test_fft_spectrum_calculation(self):
         img = Image.new("RGB", (128, 128), color=(50, 100, 150))
-        norm_vis, peak_ratio, score, suspected = calculate_fft_spectrum(img)
+        norm_vis, score, peak_ratio, suspected = calculate_fft_spectrum(img)
         self.assertGreaterEqual(score, 0.0)
         self.assertGreaterEqual(peak_ratio, 0.0)
         self.assertIsInstance(suspected, (bool, type(False)))

@@ -36,7 +36,7 @@ from lensint.utils.image_ops import numpy_to_base64_png
 def perform_ela(pil_img: Image.Image, quality: int = 90, multiplier: float = 15.0) -> Tuple[np.ndarray, float, float, float, float, str]:
     if getattr(pil_img, 'format', None) == 'PNG':
         h, w = pil_img.height, pil_img.width
-        return np.zeros((h, w), dtype=np.uint8), 0.0, 0.0, 0.0, 0.0, "Skipped ELA for PNG image to avoid artificial format-conversion artifacts."
+        return np.zeros((h, w, 3), dtype=np.uint8), 0.0, 0.0, 0.0, 0.0, "Skipped ELA for PNG image to avoid artificial format-conversion artifacts."
 
     orig_rgb = pil_img.convert("RGB")
     orig_arr = np.array(orig_rgb, dtype=np.float32)
@@ -93,16 +93,20 @@ def detect_copy_move(pil_img: Image.Image, min_matches: int = 8) -> Tuple[bool, 
         return False, 0, None
 
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
-    matches = bf.knnMatch(descriptors, descriptors, k=2)
+    # Use k=3 so that match 0 is the keypoint itself, match 1 is 1st neighbor, match 2 is 2nd neighbor
+    matches = bf.knnMatch(descriptors, descriptors, k=3)
 
     good_matches = []
-    for m, n in matches:
-        if m.queryIdx != m.trainIdx and m.distance < 0.75 * n.distance:
-            pt1 = keypoints[m.queryIdx].pt
-            pt2 = keypoints[m.trainIdx].pt
-            spatial_dist = np.sqrt((pt1[0] - pt2[0]) ** 2 + (pt1[1] - pt2[1]) ** 2)
+    for match_group in matches:
+        if len(match_group) < 3:
+            continue
+        m1, m2 = match_group[1], match_group[2]
+        if m1.queryIdx != m1.trainIdx and m1.distance < 0.75 * m2.distance:
+            pt1 = keypoints[m1.queryIdx].pt
+            pt2 = keypoints[m1.trainIdx].pt
+            spatial_dist = np.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1])
             if spatial_dist > 40:
-                good_matches.append(m)
+                good_matches.append(m1)
 
     match_count = len(good_matches)
     detected = match_count >= min_matches

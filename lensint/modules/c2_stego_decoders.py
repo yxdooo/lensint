@@ -147,7 +147,7 @@ class C2StegoDetector:
                             decompressed = b""
                             if chunk_type == b"zTXt":
                                 compressed_body = chunk_data[null_idx + 2 :]
-                                decompressed = zlib.decompress(compressed_body)
+                                decompressed = zlib.decompressobj().decompress(compressed_body, max_length=5_000_000)
                             elif chunk_type == b"iTXt":
                                 if len(chunk_data) > null_idx + 2:
                                     comp_flag = chunk_data[null_idx + 1]
@@ -158,7 +158,7 @@ class C2StegoDetector:
                                             trans_null = rest.find(b"\x00", lang_null + 1)
                                             if trans_null != -1:
                                                 compressed_body = rest[trans_null + 1 :]
-                                                decompressed = zlib.decompress(compressed_body)
+                                                decompressed = zlib.decompressobj().decompress(compressed_body, max_length=5_000_000)
                             
                             if len(decompressed) > 10:
                                 result["compressed_metadata"].append({

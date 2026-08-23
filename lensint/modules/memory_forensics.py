@@ -188,7 +188,7 @@ class MemoryForensicsEngine:
                         pass
             webp_pos += 4
 
-        # 4. Carve GIF structurally (GIF87a / GIF89a -> ... -> \x3B)
+        # 4. Carve GIF structurally (Parse blocks directly to true 0x3B trailer)
         for magic in (b"GIF87a", b"GIF89a"):
             gif_pos = 0
             while True:
@@ -196,27 +196,66 @@ class MemoryForensicsEngine:
                 if gif_pos == -1:
                     break
                 
-                trailer_pos = raw_memory.find(b"\x3B", gif_pos + 6)
-                while trailer_pos != -1 and (trailer_pos - gif_pos) < self.max_carve_size:
-                    img_data = raw_memory[gif_pos : trailer_pos + 1]
-                    try:
-                        with Image.open(io.BytesIO(img_data)) as test_img:
-                            test_img.load()
-                            w, h = test_img.size
-                            if w >= 8 and h >= 8:
-                                all_candidates.append({
-                                    "format": "GIF",
-                                    "offset": gif_pos,
-                                    "offset_hex": hex(gif_pos),
-                                    "size_bytes": len(img_data),
-                                    "dimensions": (w, h),
-                                    "raw_bytes": img_data,
-                                    "source": f"Memory Carved Chunk (Offset: {hex(gif_pos)})",
-                                })
+                # Fast structural GIF block parser
+                cur = gif_pos
+                if cur + 13 <= total_len:
+                    packed = raw_memory[cur + 10]
+                    cur += 13
+                    if packed & 0x80:
+                        gct_size = 3 * (1 << ((packed & 0x07) + 1))
+                        cur += gct_size
+                    
+                    found_end: Optional[int] = None
+                    while cur < total_len and (cur - gif_pos) < self.max_carve_size:
+                        b = raw_memory[cur]
+                        if b == 0x3B:  # Trailer
+                            found_end = cur + 1
+                            break
+                        elif b == 0x21:  # Extension block
+                            cur += 2
+                            while cur < total_len:
+                                sub_len = raw_memory[cur]
+                                cur += 1
+                                if sub_len == 0:
+                                    break
+                                cur += sub_len
+                        elif b == 0x2C:  # Image descriptor
+                            if cur + 10 > total_len:
                                 break
-                    except Exception:
-                        pass
-                    trailer_pos = raw_memory.find(b"\x3B", trailer_pos + 1)
+                            img_packed = raw_memory[cur + 9]
+                            cur += 10
+                            if img_packed & 0x80:
+                                lct_size = 3 * (1 << ((img_packed & 0x07) + 1))
+                                cur += lct_size
+                            if cur < total_len:
+                                cur += 1  # LZW min code size
+                                while cur < total_len:
+                                    sub_len = raw_memory[cur]
+                                    cur += 1
+                                    if sub_len == 0:
+                                        break
+                                    cur += sub_len
+                        else:
+                            break
+
+                    if found_end:
+                        img_data = raw_memory[gif_pos:found_end]
+                        try:
+                            with Image.open(io.BytesIO(img_data)) as test_img:
+                                test_img.load()
+                                w, h = test_img.size
+                                if w >= 8 and h >= 8:
+                                    all_candidates.append({
+                                        "format": "GIF",
+                                        "offset": gif_pos,
+                                        "offset_hex": hex(gif_pos),
+                                        "size_bytes": len(img_data),
+                                        "dimensions": (w, h),
+                                        "raw_bytes": img_data,
+                                        "source": f"Memory Carved Chunk (Offset: {hex(gif_pos)})",
+                                    })
+                        except Exception:
+                            pass
                 gif_pos += 6
 
         # 5. Carve BMP (BITMAPFILEHEADER structure)

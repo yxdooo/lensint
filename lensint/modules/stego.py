@@ -165,36 +165,72 @@ def perform_rs_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
             res[:, 2] = res[:, 2] ^ 1
             return res
 
-        # F_{-1}(x) = (x-1) if x is even else (x+1)
+        # F_{-1}(x) = (x-1) if x is even else (x+1), clipped to [0, 255]
         def flip_neg(g):
             res = g.copy()
             for col in (1, 2):
-                c = res[:, col]
-                res[:, col] = np.where(c % 2 == 0, c - 1, c + 1)
+                c = res[:, col].astype(np.int16)
+                flipped = np.where(c % 2 == 0, c - 1, c + 1)
+                res[:, col] = np.clip(flipped, 0, 255).astype(np.uint8)
             return res
+
+        # F_0(x) with all LSBs flipped (complement carrier)
+        def flip_all_lsb(g):
+            res = g.copy()
+            return res ^ 1
 
         v_orig = variation(groups)
         v_pos = variation(flip_pos(groups))
         v_neg = variation(flip_neg(groups))
 
         # Count Regular (v_flipped > v_orig) and Singular (v_flipped < v_orig)
-        r_m = np.mean(v_pos > v_orig)
-        s_m = np.mean(v_pos < v_orig)
-        r_neg = np.mean(v_neg > v_orig)
-        s_neg = np.mean(v_neg < v_orig)
+        r_m = float(np.mean(v_pos > v_orig))
+        s_m = float(np.mean(v_pos < v_orig))
+        r_neg = float(np.mean(v_neg > v_orig))
+        s_neg = float(np.mean(v_neg < v_orig))
 
-        # Discrepancy indicates LSB modification
+        # Complement image LSB group variations
+        groups_comp = flip_all_lsb(groups)
+        v_comp_orig = variation(groups_comp)
+        v_comp_pos = variation(flip_pos(groups_comp))
+        v_comp_neg = variation(flip_neg(groups_comp))
+
+        r_m_c = float(np.mean(v_comp_pos > v_comp_orig))
+        s_m_c = float(np.mean(v_comp_pos < v_comp_orig))
+        r_neg_c = float(np.mean(v_comp_neg > v_comp_orig))
+        s_neg_c = float(np.mean(v_comp_neg < v_comp_orig))
+
         d0 = r_m - s_m
-        d1 = r_neg - s_neg
+        d_neg0 = r_neg - s_neg
+        d1 = r_m_c - s_m_c
+        d_neg1 = r_neg_c - s_neg_c
 
-        # Estimation of embedding rate p:
-        # In clean images, d0 ≈ d1. In fully embedded images, d0 ≈ 0.
-        diff = abs(d0 - d1)
+        # Fridrich standard polynomial root estimation
+        a = 2.0 * (d1 + d0)
+        b = (d_neg0 - d_neg1) - d1 - 3.0 * d0
+        c_val = d0 - d_neg0
+
+        est_p = 0.0
+        diff = abs(d0 - d_neg0)
+
+        if abs(a) > 1e-6:
+            discriminant = b**2 - 4.0 * a * c_val
+            if discriminant >= 0:
+                root1 = (-b + math.sqrt(discriminant)) / (2.0 * a)
+                root2 = (-b - math.sqrt(discriminant)) / (2.0 * a)
+                # Select root with smallest absolute magnitude
+                z = root1 if abs(root1) <= abs(root2) else root2
+                if abs(z - 0.5) > 1e-6:
+                    est_p = abs(z / (z - 0.5))
+        else:
+            if abs(d1 - d_neg1 + d_neg0 - d0) > 1e-6:
+                est_p = abs((d0 - d_neg0) / (d1 - d_neg1 + d_neg0 - d0))
+
+        est_p = float(min(1.0, max(0.0, est_p)))
+
         # Threshold 0.08 (Fridrich et al. standard) prevents false positives
-        if diff > 0.08:
-            # Significant RS imbalance: calibrated estimate
-            est_rate = float(min(1.0, max(0.0, float(diff) * 2.0 / (1.0 + float(diff)))))
-            return True, round(est_rate, 3)
+        if diff > 0.08 and est_p > 0.05:
+            return True, round(est_p, 3)
         return False, 0.0
     except Exception:
         return False, 0.0

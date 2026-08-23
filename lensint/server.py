@@ -7,9 +7,11 @@ from typing import List, Optional
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from lensint import __version__
+from lensint.config import config
 from lensint.core.analyzer import ImageAnalyzer
 from lensint.reporters.html_rep import render_html_report
 from lensint.cache import get_cached, cache_stats, clear_cache
@@ -28,7 +30,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+# Mount Static Assets
+static_dir = os.path.join(os.path.dirname(__file__), "web", "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+MAX_UPLOAD_SIZE_BYTES = config.max_upload_size_bytes
 
 
 def _sanitize_extension(filename: Optional[str]) -> str:
@@ -50,7 +57,7 @@ def _process_upload(file: UploadFile, ela_quality: int, geo_lookup: bool,
             shutil.copyfileobj(file.file, f_dst)
 
         if os.path.getsize(tmp_path) > MAX_UPLOAD_SIZE_BYTES:
-            raise HTTPException(status_code=413, detail=f"File exceeds maximum allowed upload size ({MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB).")
+            raise HTTPException(status_code=413, detail=f"File exceeds maximum allowed upload size ({config.max_upload_size_mb} MB).")
 
         analyzer = ImageAnalyzer(
             tmp_path,
@@ -70,15 +77,18 @@ def _process_upload(file: UploadFile, ela_quality: int, geo_lookup: bool,
 
 @app.get('/health')
 def healthcheck():
-    return {'status': 'healthy', 'service': 'lensint-api', 'version': __version__}
+    return {'status': 'healthy', 'service': 'lensint-api', 'version': __version__, 'config': config.to_dict()}
 
 
 @app.get("/")
 async def serve_ui():
     """Serve the drag-and-drop Web UI."""
-    ui_path = os.path.join(os.path.dirname(__file__), "web", "index.html")
-    if os.path.exists(ui_path):
-        return FileResponse(ui_path)
+    template_path = os.path.join(os.path.dirname(__file__), "web", "templates", "index.html")
+    if os.path.exists(template_path):
+        return FileResponse(template_path)
+    legacy_path = os.path.join(os.path.dirname(__file__), "web", "index.html")
+    if os.path.exists(legacy_path):
+        return FileResponse(legacy_path)
     return HTMLResponse("<h3>LENSINT Web UI is available.</h3>")
 
 

@@ -1,13 +1,43 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lensint"
-version = "2.0.0"
-description = "Advanced Image Forensics and Threat Analysis Framework"
+version = "2.5.0"
+description = "Advanced Digital Image Forensics, AI Detection & Threat Intelligence Framework"
 readme = "README.md"
+authors = [
+    { name = "Lensint Security Team", email = "research@lensint.io" }
+]
+license = { text = "MIT" }
 requires-python = ">=3.8"
+keywords = [
+    "forensics",
+    "image-forensics",
+    "steganography",
+    "malware-analysis",
+    "ai-detection",
+    "deepfake-detection",
+    "osint",
+    "stix2",
+    "dfir"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Multimedia :: Graphics",
+]
+
 dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0",
@@ -23,13 +53,25 @@ server = [
 cv = [
     "opencv-python-headless>=4.8.0",
 ]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "flake8>=6.0.0",
+    "bandit>=1.7.5",
+]
 all = [
     "fastapi>=0.100.0",
     "uvicorn>=0.22.0",
     "python-multipart>=0.0.6",
     "opencv-python-headless>=4.8.0",
     "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
 ]
 
 [project.scripts]
 lensint = "lensint.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --strict-markers"

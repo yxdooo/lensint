@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LENSINT — Forensic Image Analysis & Threat Intelligence Platform</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="title">LENS<span>INT</span> // CYBER FORENSICS PLATFORM</div>
+      <div class="subtitle">Multi-Dimensional Image Authenticity, AI Detection & Malware Threat Hunting</div>
+    </div>
+    <div class="badge-version">v2.5.0 STIX-READY</div>
+  </div>
+
+  <div class="drop-zone" id="drop-zone">
+    <div class="drop-icon">🔍</div>
+    <div class="drop-title">Drag & Drop Image or Folder Here</div>
+    <div class="drop-hint">Supports JPEG, PNG, WebP, GIF, TIFF, BMP (Up to 50MB) • Supports Batch Selection</div>
+    <input type="file" id="file-input" style="display:none;" multiple accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff">
+    <button class="btn" onclick="document.getElementById('file-input').click()">Browse Evidence Files</button>
+  </div>
+
+  <div class="spinner" id="spinner">
+    ⚡ Analyzing Evidence... Running ELA, YARA, RS Steganalysis & PRNU Noise Correlation...
+  </div>
+
+  <div class="results-panel" id="results-panel">
+    <div class="verdict-banner" id="verdict-banner">
+      <div class="verdict-title" id="verdict-title">VERDICT: ANALYZING</div>
+      <div class="verdict-score" id="verdict-score">0 / 100</div>
+    </div>
+
+    <div class="grid-3">
+      <!-- 1. Integrity -->
+      <div class="card">
+        <div class="card-title">1. File Integrity & Hashes</div>
+        <div class="metric-row"><span class="metric-label">File Name:</span><span class="metric-val" id="m-name">-</span></div>
+        <div class="metric-row"><span class="metric-label">File Size:</span><span class="metric-val" id="m-size">-</span></div>
+        <div class="metric-row"><span class="metric-label">Format:</span><span class="metric-val" id="m-mime">-</span></div>
+        <div class="metric-row"><span class="metric-label">SHA-256:</span><span class="metric-val" id="m-sha256">-</span></div>
+      </div>
+
+      <!-- 2. Metadata -->
+      <div class="card">
+        <div class="card-title">2. Metadata & Provenance</div>
+        <div class="metric-row"><span class="metric-label">Camera:</span><span class="metric-val" id="meta-cam">-</span></div>
+        <div class="metric-row"><span class="metric-label">Software:</span><span class="metric-val" id="meta-soft">-</span></div>
+        <div class="metric-row"><span class="metric-label">Social Provenance:</span><span class="metric-val" id="meta-prov">-</span></div>
+        <div class="metric-row"><span class="metric-label">Thumbnail SSIM:</span><span class="metric-val" id="meta-ssim">-</span></div>
+      </div>
+
+      <!-- 3. AI & Synthetic -->
+      <div class="card">
+        <div class="card-title">3. AI & Deepfake Detection</div>
+        <div class="metric-row"><span class="metric-label">AI Verdict:</span><span class="metric-val" id="ai-verdict">-</span></div>
+        <div class="metric-row"><span class="metric-label">AI Probability:</span><span class="metric-val" id="ai-score">-</span></div>
+        <div class="metric-row"><span class="metric-label">PRNU Sensor:</span><span class="metric-val" id="ai-prnu">-</span></div>
+        <div class="metric-row"><span class="metric-label">2D FFT Spectrum:</span><span class="metric-val" id="ai-fft">-</span></div>
+      </div>
+
+      <!-- 4. Tampering Forensics -->
+      <div class="card">
+        <div class="card-title">4. Tampering & Splicing</div>
+        <div class="metric-row"><span class="metric-label">ELA Score:</span><span class="metric-val" id="tamp-ela">-</span></div>
+        <div class="metric-row"><span class="metric-label">Copy-Move (Cloning):</span><span class="metric-val" id="tamp-cm">-</span></div>
+        <div class="metric-row"><span class="metric-label">Splice Detection:</span><span class="metric-val" id="tamp-splice">-</span></div>
+        <div class="metric-row"><span class="metric-label">JPEG Ghosts:</span><span class="metric-val" id="tamp-ghost">-</span></div>
+      </div>
+
+      <!-- 5. Stego & Malware -->
+      <div class="card">
+        <div class="card-title">5. Stego & Malware Rules</div>
+        <div class="metric-row"><span class="metric-label">Overlay Payload:</span><span class="metric-val" id="stego-overlay">-</span></div>
+        <div class="metric-row"><span class="metric-label">RS Steganalysis:</span><span class="metric-val" id="stego-rs">-</span></div>
+        <div class="metric-row"><span class="metric-label">Malware Threats:</span><span class="metric-val" id="mal-threat">-</span></div>
+        <div class="metric-row"><span class="metric-label">YARA Rule Matches:</span><span class="metric-val" id="mal-yara">-</span></div>
+      </div>
+
+      <!-- 6. Heatmap Visualizer -->
+      <div class="card">
+        <div class="card-title">6. Forensic Heatmap</div>
+        <div id="heatmap-container">
+          <p style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px;">Visual heatmaps generated during deep analysis.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

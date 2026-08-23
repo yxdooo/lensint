@@ -1,8 +1,16 @@
+# Core Dependencies
 pillow>=10.0.0
 numpy>=1.24.0
 rich>=13.0.0
-pytest>=7.0.0
+
+# Optional Server & UI
 fastapi>=0.100.0
 uvicorn>=0.22.0
 python-multipart>=0.0.6
+
+# Optional Enhanced Computer Vision
 opencv-python-headless>=4.8.0
+
+# Testing & Quality
+pytest>=7.0.0
+pytest-cov>=4.0.0

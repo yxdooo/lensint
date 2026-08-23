@@ -100,6 +100,26 @@ Examples:
         help="Minimum length for ASCII/UTF-16 string extraction (default: 4)",
     )
     parser.add_argument(
+        "--case-id",
+        metavar="ID",
+        help="Forensic Case Identifier for Chain of Custody record (e.g., CASE-2026-042)",
+    )
+    parser.add_argument(
+        "--examiner",
+        metavar="NAME",
+        help="Forensic Analyst / Examiner name for audit log",
+    )
+    parser.add_argument(
+        "--audit-log",
+        metavar="PATH",
+        help="Custom file path to append cryptographically sealed forensic audit log entry",
+    )
+    parser.add_argument(
+        "--no-audit",
+        action="store_true",
+        help="Disable forensic audit trail recording for this run",
+    )
+    parser.add_argument(
         "-q", "--quiet",
         action="store_true",
         help="Suppress detailed console tables and output only the final verdict",
@@ -221,6 +241,18 @@ def main(args_list: List[str] = None) -> int:
             stix_path = _batch_path(args.stix, target_stem)
             export_stix_report(result, stix_path)
             console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
+
+        # Forensic Audit Trail & Chain of Custody Record
+        if not args.no_audit:
+            from lensint.audit import audit_logger
+            audit_entry = audit_logger.record_analysis(
+                result=result,
+                case_id=args.case_id,
+                examiner=args.examiner,
+                custom_log_path=args.audit_log,
+            )
+            if args.audit_log:
+                console.print(f"[dim]🔒 Sealed audit record saved (Seal: {audit_entry['audit_seal_sha256'][:12]}...)[/dim]")
 
     return 0
 

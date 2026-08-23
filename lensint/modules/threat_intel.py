@@ -1,10 +1,12 @@
 import json, urllib.parse, urllib.request
 from typing import Any, Dict, List, Optional
+from lensint.config import config
 from lensint.core.models import ThreatIntelReport
 
-def reverse_geocode(latitude: float, longitude: float, timeout: int = 3) -> Optional[Dict[str, str]]:
+def reverse_geocode(latitude: float, longitude: float, timeout: Optional[int] = None) -> Optional[Dict[str, str]]:
+    timeout = timeout or config.geolookup_timeout_seconds
     url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={latitude}&lon={longitude}&zoom=18&addressdetails=1'
-    req = urllib.request.Request(url, headers={'User-Agent': 'Lensint-Forensics/2.0'})
+    req = urllib.request.Request(url, headers={'User-Agent': config.nominatim_user_agent})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if resp.status == 200:

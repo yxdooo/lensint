@@ -473,7 +473,7 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
         row_vars = []
         for x in range(0, w - block_size + 1, block_size):
             blk = gray[y:y+block_size, x:x+block_size]
-            lap = cv2.Laplacian(blk, cv2.CV_64F) if HAS_CV2 else blk # simplified if no cv2, but cv2 is HAS_CV2
+            lap = cv2.Laplacian(blk.astype(np.float64), cv2.CV_64F) if HAS_CV2 else blk
             var = np.var(lap) if HAS_CV2 else np.var(blk)
             row_vars.append(var)
             variances.append(var)

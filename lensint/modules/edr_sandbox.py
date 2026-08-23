@@ -1,8 +1,8 @@
-"""Real-Time Image Artifact Watcher, Process Attribution & Sandbox Ingestion Engine.
+"""Real-Time Endpoint Evidence Watcher, Process Attribution & Sandbox Ingestion Engine.
 
 Provides:
-1. Continuous real-time directory event monitoring for incident response and SOC evidence drops.
-2. Process attribution telemetry (correlating dropped artifacts with active processes).
+1. Real-time file system evidence drop monitoring for SOC incident response directories.
+2. Endpoint process attribution telemetry (correlating new evidence files with active processes).
 3. Dynamic analysis sandbox capture ingestion (CAPE / Cuckoo screenshots & dropped artifacts).
 """
 from __future__ import annotations
@@ -40,18 +40,16 @@ class RealtimeDropMonitor:
         processes = []
         try:
             if os.name == "nt":
-                # Windows tasklist
                 cmd = ["tasklist", "/FO", "CSV", "/NH"]
                 output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
-                for line in output.strip().split("\n")[:20]:
+                for line in output.strip().split("\n")[:25]:
                     parts = [p.strip(' "\r') for p in line.split(",")]
                     if len(parts) >= 2:
                         processes.append({"image_name": parts[0], "pid": parts[1]})
             else:
-                # Linux / Unix ps
                 cmd = ["ps", "-eo", "pid,comm", "--no-headers"]
                 output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
-                for line in output.strip().split("\n")[:20]:
+                for line in output.strip().split("\n")[:25]:
                     parts = line.strip().split(None, 1)
                     if len(parts) == 2:
                         processes.append({"pid": parts[0], "image_name": parts[1]})

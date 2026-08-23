@@ -130,6 +130,21 @@ Examples:
         help="Disable forensic audit trail recording for this run",
     )
     parser.add_argument(
+        "--carve-memory",
+        metavar="DUMP_PATH",
+        help="Carve and analyze volatile image buffers from raw RAM memory dump (.raw, .dmp, .vmem)",
+    )
+    parser.add_argument(
+        "--watch-dir",
+        metavar="DIR",
+        help="Run EDR real-time monitor on target directory for newly dropped evidence files",
+    )
+    parser.add_argument(
+        "--sandbox-dir",
+        metavar="DIR",
+        help="Ingest and correlate dynamic sandbox run execution artifacts (CAPE / Cuckoo)",
+    )
+    parser.add_argument(
         "-q", "--quiet",
         action="store_true",
         help="Suppress detailed console tables and output only the final verdict",
@@ -163,6 +178,38 @@ def main(args_list: List[str] = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(args_list)
+
+    # 1. Memory Dump Carving
+    if args.carve_memory:
+        from lensint.modules.memory_forensics import MemoryForensicsEngine
+        console.print(f"[bold cyan]Scanning volatile memory dump:[/bold cyan] {args.carve_memory}...")
+        engine = MemoryForensicsEngine()
+        carved = engine.scan_memory_dump_file(args.carve_memory)
+        console.print(f"[bold green]Successfully carved {len(carved)} image buffer(s) from memory dump.[/bold green]")
+        for idx, c in enumerate(carved[:10]):
+            console.print(f"  [{idx+1}] Offset: {c['offset_hex']} | Format: {c['format']} | Size: {c['size_bytes']} B | Dims: {c['dimensions']} | Source: {c['source']}")
+        return 0
+
+    # 2. EDR Real-Time Drop Watcher
+    if args.watch_dir:
+        from lensint.modules.edr_sandbox import EDRFileDropMonitor
+        console.print(f"[bold cyan]Starting EDR Real-Time Monitor on:[/bold cyan] {args.watch_dir} (Press Ctrl+C to stop)...")
+        monitor = EDRFileDropMonitor(args.watch_dir, alert_callback=lambda res: console.print(f"[bold red]🚨 EDR CRITICAL ALERT:[/bold red] {res.integrity.file_name} -> {res.overall_risk_level} (Score: {res.overall_risk_score})"))
+        monitor.scan_new_drops_once()
+        console.print("[green]Initial scan complete. Watcher active.[/green]")
+        return 0
+
+    # 3. Sandbox Ingestion
+    if args.sandbox_dir:
+        from lensint.modules.edr_sandbox import SandboxIngestionEngine
+        console.print(f"[bold cyan]Ingesting dynamic sandbox run artifacts:[/bold cyan] {args.sandbox_dir}...")
+        findings = SandboxIngestionEngine.analyze_sandbox_artifacts(args.sandbox_dir)
+        console.print(f"[bold green]Sandbox Analysis Verdict:[/bold green] {findings['overall_sandbox_verdict']} (Analyzed {findings['screenshots_analyzed']} capture(s))")
+        if findings["extracted_credentials"]:
+            console.print(f"[bold red]Extracted Credentials ({len(findings['extracted_credentials'])}):[/bold red]")
+            for cred in findings["extracted_credentials"][:5]:
+                console.print(f"  • {cred}")
+        return 0
 
     if not args.target:
         parser.print_help()

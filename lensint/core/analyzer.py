@@ -162,6 +162,25 @@ class ImageAnalyzer:
             urls=result.strings.iocs_detected["urls"],
         )
 
+        # C2 Steganography & Covert Channel Analysis
+        try:
+            from lensint.modules.c2_stego_decoders import C2StegoDetector
+            png_covert = C2StegoDetector.analyze_png_chunks(raw_bytes)
+            for f in png_covert.get("findings", []):
+                result.stego.findings.append(f)
+            freq_markers = C2StegoDetector.analyze_frequency_stego_markers(raw_bytes)
+            for fm in freq_markers:
+                result.stego.findings.append(f"C2 Stego Frequency Carrier: {fm['tool']} ({fm['confidence']}).")
+
+            # Neural Prompt Injections in metadata / OCR
+            from lensint.modules.neural_ai import scan_prompt_injections
+            combined_text = result.ocr.extracted_text + " " + str(result.metadata.raw_tags)
+            injections = scan_prompt_injections(combined_text)
+            for inj in injections:
+                result.summary_findings.append(f"Prompt Injection Alert: {inj['type']} ({inj['sample']}).")
+        except Exception:
+            pass
+
         self._calculate_verdict(result)
         result.analysis_duration_seconds = time.monotonic() - start_time
         if self.use_cache:

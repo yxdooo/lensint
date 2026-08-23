@@ -215,6 +215,21 @@ def analyze_stego(raw_bytes: bytes, pil_img: Optional[Image.Image], generate_vis
     for ts in tool_sigs:
         report.findings.append(f"Stego tool signature identified: {ts}")
 
+    # Stego Passphrase dictionary check
+    try:
+        from lensint.modules.stego_extract import bruteforce_stego_dictionary, analyze_palette_steganography
+        dict_hit = bruteforce_stego_dictionary(raw_bytes)
+        if dict_hit:
+            report.findings.append(f"Stego Carrier Tool: {dict_hit['tool']} ({dict_hit['status']}).")
+
+        # Palette steganography check
+        if pil_img is not None:
+            pal_res = analyze_palette_steganography(pil_img)
+            for f in pal_res.get("findings", []):
+                report.findings.append(f)
+    except Exception:
+        pass
+
     if pil_img is not None:
         try:
             arr = np.array(pil_img.convert('RGB'), dtype=np.uint8)

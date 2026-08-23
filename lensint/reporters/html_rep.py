@@ -245,7 +245,18 @@ body {{
   </div>
 
   <div class="card">
-    <div class="card-title">Extracted IOCs & Strings</div>
+    <div class="card-title">7. OCR & Confidential Secret Leaks</div>
+    <table class="table">
+      <tr><td class="key-cell">OCR Status</td><td class="val-cell">{'Text Detected (' + str(getattr(result.ocr, 'word_count', 0)) + ' words via ' + getattr(result.ocr, 'engine_used', 'OCR') + ')' if getattr(result.ocr, 'text_detected', False) else 'No text recognized'}</td></tr>
+      <tr><td class="key-cell">API Keys & Tokens</td><td class="val-cell">{_e(', '.join(getattr(result.ocr, 'api_keys_found', []))) if getattr(result.ocr, 'api_keys_found', []) else 'None'}</td></tr>
+      <tr><td class="key-cell">Cleartext Passwords</td><td class="val-cell">{_e(', '.join(getattr(result.ocr, 'passwords_found', []))) if getattr(result.ocr, 'passwords_found', []) else 'None'}</td></tr>
+      <tr><td class="key-cell">Private Keys / Seeds</td><td class="val-cell">{_e(', '.join(getattr(result.ocr, 'private_keys_found', []))) if getattr(result.ocr, 'private_keys_found', []) else 'None'}</td></tr>
+      <tr><td class="key-cell">PII (Cards / SSN / TC)</td><td class="val-cell">{_e(', '.join(getattr(result.ocr, 'pii_found', []))) if getattr(result.ocr, 'pii_found', []) else 'None'}</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">8. Extracted IOCs & Strings</div>
     <table class="table">
       <tr><td class="key-cell">IPv4 Addresses</td><td class="val-cell">{ipv4_html}</td></tr>
       <tr><td class="key-cell">URLs & Endpoints</td><td class="val-cell">{urls_html}</td></tr>

@@ -110,18 +110,37 @@ class ImageAnalyzer:
         def _run_malware():
             return analyze_malware_and_polyglots(raw_bytes)
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        def _run_ocr():
+            from lensint.modules.ocr_scan import analyze_ocr
+            return analyze_ocr(pil_img.copy() if pil_img else None)
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
             f_metadata = executor.submit(_run_metadata)
             f_stego = executor.submit(_run_stego)
             f_strings = executor.submit(_run_strings)
             f_ai = executor.submit(_run_ai_detect)
             f_malware = executor.submit(_run_malware)
+            f_ocr = executor.submit(_run_ocr)
 
             result.metadata = f_metadata.result()
             result.stego = f_stego.result()
             result.strings = f_strings.result()
             result.ai_detection = f_ai.result()
             result.malware = f_malware.result()
+            result.ocr = f_ocr.result()
+
+        # If OCR text wasn't extracted via image OCR, cross-correlate with binary strings
+        if not result.ocr.text_detected and result.strings.sample_strings:
+            from lensint.modules.ocr_scan import scan_sensitive_leaks
+            fallback_text = " ".join(result.strings.sample_strings[:200])
+            fallback_leaks = scan_sensitive_leaks(fallback_text)
+            if fallback_leaks["findings"]:
+                result.ocr.sensitive_findings.extend(fallback_leaks["findings"])
+                result.ocr.api_keys_found.extend(fallback_leaks["api_keys"])
+                result.ocr.passwords_found.extend(fallback_leaks["passwords"])
+                result.ocr.tokens_found.extend(fallback_leaks["tokens"])
+                result.ocr.pii_found.extend(fallback_leaks["pii"])
+                result.ocr.private_keys_found.extend(fallback_leaks["private_keys"])
 
         if self.perform_geolookup and result.metadata.gps_info:
             lat = result.metadata.gps_info["latitude"]
@@ -264,6 +283,13 @@ class ImageAnalyzer:
         if b64_count > 0:
             score += 10.0
             findings.append(f"{b64_count} encoded Base64 payload blob(s) discovered.")
+
+        if result.ocr.sensitive_findings:
+            score += 45.0
+            leak_count = len(result.ocr.sensitive_findings)
+            first_type = result.ocr.sensitive_findings[0]["type"]
+            first_red = result.ocr.sensitive_findings[0]["redacted"]
+            findings.append(f"Confidential Data Leak: {leak_count} secret(s) discovered including {first_type} ({first_red}).")
 
         result.overall_risk_score = round(min(100.0, score), 1)
         if result.overall_risk_score >= 70.0 or result.malware.has_threats:

@@ -211,14 +211,27 @@ def analyze_jpeg_ghosts(pil_img: Image.Image) -> Tuple[bool, List[int], float, O
 # 4. DQT (Quantization Table) Hardware/Software Profiling
 # ============================================================================
 KNOWN_DQT_SIGNATURES = [
+    ("Adobe Photoshop Save for Web Quality 100", [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+    ("Adobe Photoshop Save for Web Quality 90", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 3, 4, 6]),
     ("Adobe Photoshop Save for Web Quality 80", [3, 2, 2, 3, 2, 2, 3, 3, 3, 3, 4, 4, 3, 4, 5, 8]),
+    ("Adobe Photoshop Save for Web Quality 70", [5, 3, 3, 5, 4, 3, 5, 5, 4, 5, 6, 6, 5, 6, 8, 12]),
     ("Adobe Photoshop Save for Web Quality 60", [6, 4, 4, 6, 5, 4, 6, 6, 5, 6, 7, 7, 7, 7, 9, 15]),
-    ("Adobe Photoshop Quality 10 (Standard Save)", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 5]),
-    ("Adobe Photoshop Quality 12 (Maximum)", [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
-    ("Apple iOS Camera Native Encoder", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 3, 4, 6]),
-    ("Samsung Galaxy Camera Native Encoder", [3, 2, 2, 3, 2, 2, 3, 3, 3, 3, 4, 3, 3, 4, 5, 7]),
-    ("Independent JPEG Group (IJG) Standard Q75", [8, 6, 5, 8, 12, 20, 26, 31, 6, 6, 7, 10, 13, 29, 30, 28]),
+    ("Adobe Photoshop Quality 12 (Maximum Save As)", [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+    ("Adobe Photoshop Quality 10 (Standard Save As)", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 5]),
+    ("Adobe Lightroom Classic High-Quality Export", [1, 1, 1, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 5]),
+    ("Apple iPhone 13-16 Pro Native ISP Encoder", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 3, 4, 6]),
+    ("Samsung Galaxy S20-S24 Ultra Native ISP", [3, 2, 2, 3, 2, 2, 3, 3, 3, 3, 4, 3, 3, 4, 5, 7]),
+    ("Google Pixel 6-9 Pro HDR+ Computational ISP", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 3, 2, 2, 3, 4, 5]),
+    ("Canon EOS DIGIC 7/8/X Hardware Encoder", [2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4]),
+    ("Nikon EXPEED 6/7 Hardware Encoder", [2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 5]),
+    ("Sony Alpha BIONZ X/XR Hardware Encoder", [1, 1, 1, 2, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 6]),
+    ("DJI Mavic / Mini Pro Drone Native Encoder", [2, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 6]),
+    ("WhatsApp Web / Mobile Transcoder Quality 80", [5, 3, 3, 5, 7, 12, 15, 18, 4, 4, 4, 6, 8, 17, 18, 16]),
+    ("Telegram Web Image Transcoder", [6, 4, 4, 6, 9, 15, 20, 24, 5, 5, 5, 8, 10, 22, 23, 21]),
+    ("Twitter / X Media Compression Pipeline", [5, 4, 4, 6, 8, 13, 17, 21, 4, 4, 5, 7, 9, 19, 20, 18]),
     ("GIMP Standard Export Quality 90", [3, 2, 2, 3, 2, 2, 3, 3, 3, 3, 4, 4, 3, 4, 5, 7]),
+    ("Affinity Photo 2 JPEG Exporter", [2, 1, 1, 2, 1, 1, 2, 2, 2, 2, 2, 3, 2, 3, 4, 6]),
+    ("Independent JPEG Group (IJG) Standard Q75", [8, 6, 5, 8, 12, 20, 26, 31, 6, 6, 7, 10, 13, 29, 30, 28]),
 ]
 
 

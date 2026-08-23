@@ -68,6 +68,16 @@ Examples:
         help="Export STIX 2.1 threat intelligence bundle to specified path",
     )
     parser.add_argument(
+        "--misp",
+        metavar="PATH",
+        help="Export standardized MISP JSON event format to specified path",
+    )
+    parser.add_argument(
+        "--generate-yara",
+        metavar="PATH",
+        help="Generate deployable YARA detection rule (.yar) matching detected threats and hashes",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Disable result caching (always re-analyze)",
@@ -241,6 +251,20 @@ def main(args_list: List[str] = None) -> int:
             stix_path = _batch_path(args.stix, target_stem)
             export_stix_report(result, stix_path)
             console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
+
+        if args.misp:
+            from lensint.reporters.misp_rep import render_misp_report
+            misp_path = _batch_path(args.misp, target_stem)
+            with open(misp_path, "w", encoding="utf-8") as mf:
+                mf.write(render_misp_report(result))
+            console.print(f"[bold green]MISP JSON event written to:[/bold green] {misp_path}")
+
+        if args.generate_yara:
+            from lensint.reporters.yara_gen import generate_yara_rule
+            yara_path = _batch_path(args.generate_yara, target_stem)
+            with open(yara_path, "w", encoding="utf-8") as yf:
+                yf.write(generate_yara_rule(result))
+            console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
 
         # Forensic Audit Trail & Chain of Custody Record
         if not args.no_audit:

@@ -240,6 +240,26 @@ class ThreatIntelReport:
 
 
 @dataclass
+class OCRReport:
+    ocr_performed: bool = False
+    engine_used: str = "None"
+    text_detected: bool = False
+    extracted_text: str = ""
+    character_count: int = 0
+    word_count: int = 0
+    sensitive_findings: List[Dict[str, Any]] = field(default_factory=list)
+    api_keys_found: List[str] = field(default_factory=list)
+    passwords_found: List[str] = field(default_factory=list)
+    tokens_found: List[str] = field(default_factory=list)
+    pii_found: List[str] = field(default_factory=list)
+    private_keys_found: List[str] = field(default_factory=list)
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class AnalysisResult:
     target_path: str = ""
     timestamp: str = ""
@@ -256,6 +276,7 @@ class AnalysisResult:
     ai_detection: AIDetectionReport = field(default_factory=AIDetectionReport)
     malware: MalwareReport = field(default_factory=MalwareReport)
     threat_intel: ThreatIntelReport = field(default_factory=ThreatIntelReport)
+    ocr: OCRReport = field(default_factory=OCRReport)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -274,4 +295,5 @@ class AnalysisResult:
             "ai_detection": self.ai_detection.to_dict(),
             "malware": self.malware.to_dict(),
             "threat_intel": self.threat_intel.to_dict(),
+            "ocr": self.ocr.to_dict(),
         }

@@ -311,7 +311,7 @@ class ImageAnalyzer:
             has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
             
             calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
-                ela_score=result.tampering.ela_max_diff,
+                ela_score=result.tampering.ela_difference_max,
                 copy_move_detected=result.tampering.copy_move_detected,
                 dqt_anomaly=result.tampering.dqt_found,
                 cfa_anomaly=result.tampering.cfa_tampering_detected,
@@ -332,7 +332,9 @@ class ImageAnalyzer:
                 result.overall_risk_level = "CRITICAL"
                 result.overall_risk_score = max(90.0, result.overall_risk_score)
                 
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger("lensint.analyzer").error(f"Bayesian Fusion Error: {e}")
             # Safe fallback if fusion engine is unavailable
             result.overall_risk_score = 0.0
             result.overall_risk_level = "ANALYSIS_ERROR"

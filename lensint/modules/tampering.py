@@ -478,13 +478,19 @@ def analyze_median_filtering(pil_img: Image.Image) -> Tuple[bool, float]:
 def analyze_illumination_consistency(pil_img: Image.Image) -> Tuple[float, bool]:
     gray = np.array(pil_img.convert("L"), dtype=np.float32)
     h, w = gray.shape
-    if h < 64 or w < 64 or np.std(gray) < 2.0:
+    if h < 64 or w < 64 or np.std(gray) < 5.0:
         return 0.0, False
 
-    gx = gray[1:-1, 2:] - gray[1:-1, :-2]
-    gy = gray[2:, 1:-1] - gray[:-2, 1:-1]
+    # Compute spatial gradients for smooth luminance shading
+    gx = (gray[1:-1, 2:] - gray[1:-1, :-2]).astype(np.float32)
+    gy = (gray[2:, 1:-1] - gray[:-2, 1:-1]).astype(np.float32)
     magnitude = np.sqrt(gx**2 + gy**2)
     angles = np.arctan2(gy, gx)
+
+    # Filter out sharp structural edges (>75th percentile) to isolate soft illumination shading
+    p25 = float(np.percentile(magnitude, 25))
+    p75 = float(np.percentile(magnitude, 75))
+    shading_mask = (magnitude >= max(2.0, p25)) & (magnitude <= max(8.0, p75))
 
     mh, mw = magnitude.shape
     mid_y, mid_x = mh // 2, mw // 2
@@ -498,12 +504,11 @@ def analyze_illumination_consistency(pil_img: Image.Image) -> Tuple[float, bool]
     ]
 
     for sy, sx in quads:
-        quad_mag = magnitude[sy, sx]
-        quad_ang = angles[sy, sx]
-        high_grad = quad_mag > np.percentile(quad_mag, 85)
-        if np.sum(high_grad) > 50:
-            sin_mean = np.mean(np.sin(quad_ang[high_grad]))
-            cos_mean = np.mean(np.cos(quad_ang[high_grad]))
+        quad_mask = shading_mask[sy, sx]
+        if np.sum(quad_mask) > 100:
+            quad_ang = angles[sy, sx][quad_mask]
+            sin_mean = np.mean(np.sin(quad_ang))
+            cos_mean = np.mean(np.cos(quad_ang))
             circ_mean = float(np.arctan2(sin_mean, cos_mean))
             quad_angles.append(circ_mean)
 
@@ -518,9 +523,10 @@ def analyze_illumination_consistency(pil_img: Image.Image) -> Tuple[float, bool]
             angle_diffs.append(circ_diff)
 
     max_divergence = max(angle_diffs) if angle_diffs else 0.0
+    # Illumination divergence is only anomalous if circular variance is extreme (> 2.4 rad / ~138 deg)
     illumination_score = min(100.0, round((max_divergence / math.pi) * 80.0, 2))
 
-    return illumination_score, illumination_score >= 60.0
+    return illumination_score, illumination_score >= 70.0
 
 
 # ============================================================================

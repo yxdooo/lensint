@@ -67,8 +67,22 @@ def extract_lsb_payload(
     for magic, name, ext in KNOWN_MAGIC_HEADERS:
         pos = extracted_bytes.find(magic)
         if pos != -1 and pos < 2048:
-            # Found carved embedded file
+            # Found carved embedded file: determine true container boundary
             carved = extracted_bytes[pos:]
+            if magic == b"PK\x03\x04":
+                eocd = carved.find(b"PK\x05\x06")
+                if eocd != -1 and eocd + 22 <= len(carved):
+                    comment_len = int.from_bytes(carved[eocd + 20 : eocd + 22], "little")
+                    carved = carved[: eocd + 22 + comment_len]
+            elif magic == b"\x89PNG\r\n\x1a\n":
+                iend = carved.find(b"IEND")
+                if iend != -1 and iend + 8 <= len(carved):
+                    carved = carved[: iend + 8]
+            elif magic == b"\xFF\xD8\xFF":
+                eoi = carved.find(b"\xFF\xD9")
+                if eoi != -1:
+                    carved = carved[: eoi + 2]
+
             return {
                 "format_detected": name,
                 "extension": ext,
@@ -134,10 +148,10 @@ def analyze_palette_steganography(pil_img: Image.Image) -> Dict[str, Any]:
             f"Palette Steganography indicator: {duplicates} duplicate color entries found in palette table."
         )
 
-    # Check for near-identical color pairs (difference < 3)
+    # Check for near-identical color pairs (difference <= 2 across RGB)
     near_duplicates = 0
     for i in range(len(colors)):
-        for j in range(i + 1, min(i + 10, len(colors))):
+        for j in range(i + 1, len(colors)):
             dr = abs(colors[i][0] - colors[j][0])
             dg = abs(colors[i][1] - colors[j][1])
             db = abs(colors[i][2] - colors[j][2])
@@ -183,3 +197,7 @@ def bruteforce_stego_dictionary(
         }
 
     return None
+
+
+# Alias for explicit naming
+detect_stego_container_markers = bruteforce_stego_dictionary

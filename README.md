@@ -1,4 +1,4 @@
-# Lensint v3.5 Enterprise
+# Lensint v3.6 Enterprise
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
@@ -6,7 +6,7 @@
 [![STIX 2.1](https://img.shields.io/badge/STIX-2.1%20Ready-green.svg)](https://oasis-open.github.io/cti-documentation/)
 [![MISP](https://img.shields.io/badge/MISP-Event%20Ready-red.svg)](https://www.misp-project.org/)
 [![YARA](https://img.shields.io/badge/YARA-Auto%20Generator-orange.svg)](https://virustotal.github.io/yara/)
-[![Tests](https://img.shields.io/badge/tests-78%20passed-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
+[![Tests](https://img.shields.io/badge/tests-85%20passed-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
 
 LENSINT is an advanced digital image forensics and threat hunting framework built for incident response, threat intelligence, and artifact analysis. It provides multi-dimensional inspection by combining classical physical image tampering analysis with steganography decoding, anomaly detection, neural model inference, and credential scanning.
 
@@ -15,21 +15,28 @@ LENSINT is an advanced digital image forensics and threat hunting framework buil
 ## Key Capabilities
 
 ### 1. Memory Forensics (`--carve-memory`)
-- **Volatile RAM Dump Carver**: Carves image buffers (`PNG`, `JPEG`, `BMP`, `DIB`) directly from raw RAM dumps (`.raw`, `.dmp`, `.vmem`).
+- **Volatile RAM Dump Carver**: Carves image buffers (`PNG`, `JPEG`, `WEBP`, `GIF`, `BMP`, `DIB`) directly from raw RAM dumps (`.raw`, `.dmp`, `.vmem`).
+- **Balanced Multi-Format Search**: Carves all supported image containers without format exhaustion starving, sorting results by global byte offset.
 - **Correct Chunk Overlap Offset Calculation**: Absolute evidence offsets are computed as `c["offset"] + offset_base - len(overlap_buffer)` — preventing ~1MB misattribution on multi-chunk streams.
 - **SHA-256 Deduplication**: Carved payloads are deduplicated by cryptographic SHA-256 hash.
 - **UUID-keyed Output Filenames**: Exported carve images use UUID suffixes to prevent overwrites across multiple dump sessions.
 
 ### 2. C2 Steganography & DCT-Domain Extractors
-- **Pure-Python JPEG Baseline DCT Engine (`jpeg_dct.py`)**: Full Huffman table construction and entropy-coded scan decoding to extract raw 8×8 quantized DCT coefficients from Baseline Sequential JPEGs (SOF0).
+- **Pure-Python JPEG Baseline DCT Engine (`jpeg_dct.py`)**:
+  - Full Huffman table construction and entropy-coded scan decoding to extract raw 8×8 quantized DCT coefficients from Baseline Sequential JPEGs (SOF0).
+  - **DRI & RST0–RST7 Restart Marker Support**: Discards sub-byte bit alignment and resets DC predictors to zero across restart intervals.
+  - **Multi-Scan / Multi-SOS Support**: Iterates through multiple sequential scans with structured telemetry (`status: COMPLETE | PARTIAL | ERROR`).
+  - **Strict Segment Validation**: Validates precision, dimension bounds, DQT table bounds (0–3), and DHT symbol counts.
 - **DCT-Domain Steganography Analyzers**:
-  - **JSteg DCT Payload Extractor**: Reads LSBs from non-zero, non-±1 AC coefficients to recover structured payloads (PNG, JPEG, ZIP, PDF, PE, ASCII).
+  - **JSteg DCT Payload Extractor**: Reads LSBs from non-zero, non-±1 AC coefficients to recover structured payloads (PNG, JPEG, ZIP, PDF, PE, ELF, ASCII) with Shannon bitstream entropy telemetry.
   - **F5 Matrix Embedding Capacity & Anomaly Analyzer**: Calculates carrier capacity from non-zero AC coefficients, models shrinkage, and flags LSB distribution skew.
   - **OutGuess 0.2 DCT Statistical Symmetry Analyzer**: Quantifies histogram symmetry preservation anomaly across AC coefficients.
   - **Westfeld's Chi-Square ($\chi^2$) Analysis**: Mathematical test on Pairs of Values (PoVs) to detect LSB replacement.
   - **Calibrated RS Steganalysis**: Texture-variance guarded RS analysis with 0.08 threshold to eliminate false positives on flat/solid images.
-- **PNG Structural Anomaly Analyzer**:
-  - Detects non-standard custom chunk injections (`coVT`, `stEG`).
+- **PNG Structural & Semantic Anomaly Analyzer**:
+  - Validates **IHDR length (13 bytes)**, valid **bit depth / color type combinations**, and **IEND length (0 bytes)**.
+  - Detects **IDAT Sequence Fragmentation** and non-contiguous IDAT chunks.
+  - Detects non-standard custom chunk injections (`coVT`, `stEG`) while recognizing standard registered ancillary chunks (`eXIf`, `tIME`, `gAMA`, `pHYs`).
   - Flags **CRC32 Checksum Mismatches** and decompresses `zTXt`/`iTXt` compressed metadata chunks.
 
 ### 3. Neural AI & Feature Extraction Pipeline
@@ -147,7 +154,7 @@ Open `http://localhost:8000` in your browser to access the interactive web inter
 ## Running Automated Unit Tests
 
 ```bash
-# Run all 78 modular unit tests across forensic engines
+# Run all 85 modular unit tests across forensic engines
 pytest tests/ -v --cov=lensint
 ```
 

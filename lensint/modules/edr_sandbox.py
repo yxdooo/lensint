@@ -51,14 +51,14 @@ class DirectoryWatcher:
             if os.name == "nt":
                 cmd = ["tasklist", "/FO", "CSV", "/NH"]
                 output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
-                for line in output.strip().split("\n")[:25]:
+                for line in output.strip().split("\n")[:100]:
                     parts = [p.strip(' "\r') for p in line.split(",")]
                     if len(parts) >= 2:
                         processes.append({"image_name": parts[0], "pid": parts[1]})
             else:
                 cmd = ["ps", "-eo", "pid,comm", "--no-headers"]
                 output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
-                for line in output.strip().split("\n")[:25]:
+                for line in output.strip().split("\n")[:100]:
                     parts = line.strip().split(None, 1)
                     if len(parts) == 2:
                         processes.append({"pid": parts[0], "image_name": parts[1]})
@@ -67,14 +67,14 @@ class DirectoryWatcher:
         return processes
 
     def _is_file_stable(self, path: str) -> bool:
-        """Check if file is still being written to via size and IO locks."""
+        """Check if file has finished writing by comparing size over an observation window."""
         try:
             initial_size = os.path.getsize(path)
             time.sleep(0.5)
             final_size = os.path.getsize(path)
             if initial_size != final_size or final_size == 0:
                 return False
-            # Check for exclusive lock by attempting append access
+            # Check for basic read/write availability
             with open(path, "ab"):
                 pass
             return True
@@ -101,7 +101,7 @@ class DirectoryWatcher:
                     full_path = os.path.join(root, file)
                     try:
                         stat = os.stat(full_path)
-                        # Use a tuple of (inode, mtime, size) as a unique fingerprint
+                        # Fingerprint: inode, mtime, size
                         file_fingerprint = (stat.st_ino, stat.st_mtime, stat.st_size)
                         
                         with self._lock:
@@ -109,7 +109,7 @@ class DirectoryWatcher:
 
                         if not is_processed:
                             if not self._is_file_stable(full_path):
-                                continue # Wait for the file to finish writing
+                                continue  # Wait for the file to finish writing
                                 
                             with self._lock:
                                 self.processed_files[file_fingerprint] = time.time()
@@ -151,21 +151,24 @@ class SandboxIngestionEngine:
     """Ingests and correlates dynamic sandbox execution captures (CAPE / Cuckoo).
     
     Supports:
-    1. Static visual screenshots and OCR credential scanning.
+    1. Static visual screenshots and OCR credential scanning across image formats.
     2. Dynamic execution telemetry parsing (Cuckoo/CAPE `report.json` process trees,
-       network IOCs, dropped files, and triggered signatures).
+       validated IP/domain network IOCs, dropped files, and triggered signatures).
+    3. Multi-report aggregation and artifact SHA-256 cross-correlation.
     """
 
     @staticmethod
     def parse_cuckoo_report(report_json_path: str) -> Dict[str, Any]:
         """Parse raw Cuckoo / CAPE dynamic analysis telemetry JSON report.
 
-        Extracts process tree, dropped file IOCs, network communication IOCs,
+        Extracts process tree, dropped file IOCs, network communication IOCs (validated IP vs domain),
         and high-severity dynamic signatures.
         """
+        import ipaddress
         import json
         telemetry: Dict[str, Any] = {
             "is_cuckoo_report": False,
+            "report_path": report_json_path,
             "cuckoo_score": 0.0,
             "target_file": None,
             "process_tree": [],
@@ -207,21 +210,27 @@ class SandboxIngestionEngine:
                             "command_line": p.get("command_line"),
                         })
 
-            # 3. Network IOCs
+            # 3. Network IOCs with strict IP vs Domain validation
             network = data.get("network", {})
             if isinstance(network, dict):
                 hosts = network.get("hosts", [])
                 for h in hosts:
-                    if isinstance(h, str) and h not in telemetry["network_iocs"]["ips"]:
-                        telemetry["network_iocs"]["ips"].append(h)
-                    elif isinstance(h, dict) and "ip" in h and h["ip"] not in telemetry["network_iocs"]["ips"]:
-                        telemetry["network_iocs"]["ips"].append(h["ip"])
+                    raw_host = h.get("ip") if isinstance(h, dict) else (h if isinstance(h, str) else "")
+                    if raw_host:
+                        try:
+                            ipaddress.ip_address(raw_host)
+                            if raw_host not in telemetry["network_iocs"]["ips"]:
+                                telemetry["network_iocs"]["ips"].append(raw_host)
+                        except ValueError:
+                            # Not an IP address -> classify as domain/hostname
+                            if raw_host not in telemetry["network_iocs"]["domains"]:
+                                telemetry["network_iocs"]["domains"].append(raw_host)
+
                 domains = network.get("domains", [])
                 for d in domains:
-                    if isinstance(d, dict) and "domain" in d and d["domain"] not in telemetry["network_iocs"]["domains"]:
-                        telemetry["network_iocs"]["domains"].append(d["domain"])
-                    elif isinstance(d, str) and d not in telemetry["network_iocs"]["domains"]:
-                        telemetry["network_iocs"]["domains"].append(d)
+                    dom_str = d.get("domain") if isinstance(d, dict) else (d if isinstance(d, str) else "")
+                    if dom_str and dom_str not in telemetry["network_iocs"]["domains"]:
+                        telemetry["network_iocs"]["domains"].append(dom_str)
 
             # 4. Dropped Files
             dropped = data.get("dropped", [])
@@ -263,7 +272,7 @@ class SandboxIngestionEngine:
 
     @staticmethod
     def analyze_sandbox_artifacts(sandbox_dir: str) -> Dict[str, Any]:
-        """Analyze screenshots, memory artifacts, and Cuckoo/CAPE telemetry reports."""
+        """Analyze screenshots, memory artifacts, and Cuckoo/CAPE telemetry reports with cross-correlation."""
         from lensint.core.analyzer import ImageAnalyzer
         findings: Dict[str, Any] = {
             "sandbox_dir": sandbox_dir,
@@ -273,14 +282,18 @@ class SandboxIngestionEngine:
             "extracted_credentials": [],
             "malware_signatures": [],
             "cuckoo_telemetry": None,
+            "all_cuckoo_reports": [],
+            "correlated_artifacts": [],
             "overall_sandbox_verdict": "CLEAN",
         }
 
         if not os.path.exists(sandbox_dir):
             return findings
 
-        supported_exts = {".png", ".jpg", ".jpeg", ".bmp"}
+        supported_exts = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".tiff"}
         highest_score = 0.0
+        elevated_artifact_count = 0
+        analyzed_hashes: Dict[str, str] = {}  # sha256 -> relative path
 
         for root, _, files in os.walk(sandbox_dir):
             for file in files:
@@ -288,12 +301,16 @@ class SandboxIngestionEngine:
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, sandbox_dir)
 
-                # Check for Cuckoo JSON report
+                # Check for Cuckoo JSON report(s)
                 if file.lower() in ("report.json", "cuckoo.json") or (ext == ".json" and "report" in file.lower()):
                     try:
                         cuckoo_res = SandboxIngestionEngine.parse_cuckoo_report(full_path)
                         if cuckoo_res.get("is_cuckoo_report"):
-                            findings["cuckoo_telemetry"] = cuckoo_res
+                            findings["all_cuckoo_reports"].append(cuckoo_res)
+                            # Keep primary telemetry (highest score or latest)
+                            if findings["cuckoo_telemetry"] is None or cuckoo_res["cuckoo_score"] > findings["cuckoo_telemetry"]["cuckoo_score"]:
+                                findings["cuckoo_telemetry"] = cuckoo_res
+
                             if cuckoo_res.get("threat_verdict") == "MALICIOUS":
                                 highest_score = max(highest_score, 85.0)
                             elif cuckoo_res.get("threat_verdict") == "SUSPICIOUS":
@@ -305,15 +322,21 @@ class SandboxIngestionEngine:
                     try:
                         res = ImageAnalyzer(full_path, use_cache=False).analyze()
                         findings["screenshots_analyzed"] += 1
+                        if res.integrity and res.integrity.sha256:
+                            analyzed_hashes[res.integrity.sha256] = rel_path
+
                         if res.overall_risk_score > highest_score:
                             highest_score = res.overall_risk_score
 
                         if res.overall_risk_level in ("HIGH", "CRITICAL"):
+                            elevated_artifact_count += 1
                             findings["high_risk_captures"].append({
                                 "file": rel_path,
                                 "risk_score": res.overall_risk_score,
                                 "findings": res.summary_findings[:3],
                             })
+                        elif res.overall_risk_level == "ELEVATED":
+                            elevated_artifact_count += 1
 
                         # Collect OCR secret findings from sandbox screens
                         if res.ocr and res.ocr.sensitive_findings:
@@ -327,9 +350,22 @@ class SandboxIngestionEngine:
                         logger.error(f"Failed to ingest sandbox artifact {rel_path}: {e}")
                         findings["failed_ingestions"] += 1
 
-        if highest_score >= 70.0:
+        # Correlate dropped files with analyzed artifacts by cryptographic SHA-256
+        for rep in findings["all_cuckoo_reports"]:
+            for df in rep.get("dropped_files", []):
+                df_hash = df.get("sha256")
+                if df_hash and df_hash in analyzed_hashes:
+                    findings["correlated_artifacts"].append({
+                        "file": analyzed_hashes[df_hash],
+                        "dropped_name": df.get("name"),
+                        "sha256": df_hash,
+                        "cuckoo_report": rep.get("report_path"),
+                    })
+
+        # Composite multi-evidence verdict
+        if highest_score >= 70.0 or elevated_artifact_count >= 2:
             findings["overall_sandbox_verdict"] = "MALICIOUS"
-        elif highest_score >= 35.0:
+        elif highest_score >= 35.0 or elevated_artifact_count >= 1 or len(findings["extracted_credentials"]) > 0:
             findings["overall_sandbox_verdict"] = "SUSPICIOUS"
 
         return findings

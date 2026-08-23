@@ -183,27 +183,49 @@ class ImageAnalyzer:
             urls=result.strings.iocs_detected["urls"],
         )
 
-        # C2 Steganography & Covert Channel Analysis
+        # C2 Steganography & Covert Channel Analysis (Separated Exception Boundaries)
         try:
             from lensint.modules.c2_stego_decoders import C2StegoDetector
             png_covert = C2StegoDetector.analyze_png_chunks(raw_bytes)
             for f in png_covert.get("findings", []):
                 result.stego.findings.append(f)
+            if png_covert.get("crc_tampered_chunks") or png_covert.get("idat_fragmentation_detected"):
+                result.stego.c2_stego_detected = True
+        except Exception as e:
+            logger.error(f"PNG covert channel analysis error: {e}")
+            result.stego.findings.append(f"PNG Structure Analysis Warning: {e}")
+
+        try:
+            from lensint.modules.c2_stego_decoders import C2StegoDetector
             freq_markers = C2StegoDetector.analyze_frequency_stego_markers(raw_bytes)
             for fm in freq_markers:
                 result.stego.findings.append(f"C2 Stego Frequency Carrier: {fm['tool']} ({fm['confidence']}).")
+                result.stego.c2_stego_detected = True
+
             dct_stego = C2StegoDetector.analyze_jpeg_dct_stego(raw_bytes)
             for f in dct_stego.get("findings", []):
                 result.stego.findings.append(f)
+            if dct_stego.get("c2_stego_detected"):
+                result.stego.c2_stego_detected = True
+                result.stego.dct_stego_detected = True
+                result.stego.jsteg_payload_detected = dct_stego.get("jsteg_detected", False)
+                result.stego.f5_anomaly_detected = dct_stego.get("f5_detected", False)
+                result.stego.outguess_anomaly_detected = dct_stego.get("outguess_detected", False)
+        except Exception as e:
+            logger.error(f"JPEG DCT stego analysis error: {e}")
+            result.stego.findings.append(f"JPEG DCT Analysis Warning: {e}")
 
-            # Neural Prompt Injections in metadata / OCR
+        # Neural Prompt Injections in metadata / OCR
+        try:
             from lensint.modules.neural_ai import scan_prompt_injections
             combined_text = result.ocr.extracted_text + " " + str(result.metadata.raw_tags)
             injections = scan_prompt_injections(combined_text)
+            if injections:
+                result.ai_detection.prompt_injection_detected = True
             for inj in injections:
                 result.summary_findings.append(f"Prompt Injection Alert: {inj['type']} ({inj['sample']}).")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Prompt injection scan error: {e}")
 
         self._calculate_verdict(result)
         result.analysis_duration_seconds = time.monotonic() - start_time
@@ -310,8 +332,8 @@ class ImageAnalyzer:
         try:
             from lensint.modules.benchmarks import BayesianForensicFusionEngine
             
-            has_c2_stego = any("C2 Stego" in f or "JSteg DCT" in f or "F5 Steganography" in f or "OutGuess 0.2" in f for f in result.stego.findings)
-            has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
+            has_c2_stego = result.stego.c2_stego_detected or result.stego.dct_stego_detected
+            has_prompt_injection = result.ai_detection.prompt_injection_detected
             
             calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
                 ela_score=result.tampering.ela_difference_max,
@@ -323,7 +345,7 @@ class ImageAnalyzer:
                 chi_square_detected=result.stego.lsb_stego_detected,
                 metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
                 malware_threat=result.malware.has_threats,
-                confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
+                confirmed_payload=bool(result.stego.has_overlay_data and result.stego.extracted_payload_type in ("PE/EXE", "ELF", "ZIP/DOCX", "PDF", "SHELL")),
                 c2_stego_detected=has_c2_stego,
                 prompt_injection=has_prompt_injection
             )
@@ -342,8 +364,8 @@ class ImageAnalyzer:
             result.overall_risk_score = 0.0
             result.overall_risk_level = "ANALYSIS_ERROR"
 
-        # Failsafe escalation for extremely deterministic threats
-        if result.malware.has_threats or result.stego.has_overlay_data:
+        # Failsafe escalation for confirmed malicious malware threats or verified executable overlay payloads
+        if result.malware.has_threats or (result.stego.has_overlay_data and result.stego.extracted_payload_type in ("PE/EXE", "ELF", "ZIP/DOCX")):
             result.overall_risk_level = "CRITICAL"
             result.overall_risk_score = max(90.0, result.overall_risk_score)
 

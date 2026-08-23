@@ -152,6 +152,11 @@ class StegoReport:
     rs_steganalysis_detected: bool = False
     rs_estimated_embedding_rate: float = 0.0
     stego_tool_signatures: List[str] = field(default_factory=list)
+    c2_stego_detected: bool = False
+    dct_stego_detected: bool = False
+    f5_anomaly_detected: bool = False
+    outguess_anomaly_detected: bool = False
+    jsteg_payload_detected: bool = False
     extracted_passphrase_payload: Optional[str] = None
     extracted_payload_type: Optional[str] = None
     bitplane_b64_images: Dict[str, str] = field(default_factory=dict)
@@ -193,6 +198,7 @@ class AIDetectionReport:
     c2pa_present: bool = False
     c2pa_markers: List[str] = field(default_factory=list)
     prompt_parameters: Dict[str, Any] = field(default_factory=dict)
+    prompt_injection_detected: bool = False
     fft_analyzed: bool = False
     fft_spectral_score: float = 0.0
     fft_peak_ratio: float = 0.0

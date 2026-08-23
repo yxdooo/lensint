@@ -35,14 +35,17 @@ class C2StegoDetector:
 
     @staticmethod
     def analyze_png_chunks(raw_bytes: bytes) -> Dict[str, Any]:
-        """Inspect PNG chunk structure, non-standard chunks, and CRC32 covert channels."""
+        """Inspect PNG chunk structure, semantic compliance, and covert channels."""
         result: Dict[str, Any] = {
             "is_png": False,
             "total_chunks": 0,
             "idat_count": 0,
+            "idat_fragmentation_detected": False,
+            "idat_fragmentation_score": 0.0,
             "non_standard_chunks": [],
             "crc_tampered_chunks": [],
             "compressed_metadata": [],
+            "semantic_violations": [],
             "findings": [],
         }
 
@@ -52,16 +55,17 @@ class C2StegoDetector:
         result["is_png"] = True
         pos = 8
         total_len = len(raw_bytes)
-        idat_sizes = []
-        crc_covert_bits = []
+        idat_sizes: List[int] = []
         standard_chunks = {
             b"IHDR", b"PLTE", b"IDAT", b"IEND", b"cHRM", b"gAMA", b"iCCP",
             b"sBIT", b"sRGB", b"bKGD", b"hIST", b"tRNS", b"pHYs", b"sPLT",
-            b"tIME", b"iTXt", b"tEXt", b"zTXt",
+            b"tIME", b"iTXt", b"tEXt", b"zTXt", b"eXIf",
         }
 
         has_ihdr = False
         has_iend = False
+        saw_idat = False
+        idat_consecutive_broken = False
 
         while pos + 8 <= total_len:
             try:
@@ -71,9 +75,28 @@ class C2StegoDetector:
                 expected_crc = struct.unpack(">I", raw_bytes[pos + 8 + length : pos + 12 + length])[0]
 
                 if result["total_chunks"] == 0 and chunk_type != b"IHDR":
+                    result["semantic_violations"].append("First chunk is not IHDR.")
                     result["findings"].append("Structural Anomaly: First chunk is not IHDR.")
+                
+                # Strict IHDR validation
                 if chunk_type == b"IHDR":
                     has_ihdr = True
+                    if length != 13:
+                        result["semantic_violations"].append(f"IHDR chunk length {length} != 13.")
+                        result["findings"].append(f"PNG Semantic Violation: IHDR length is {length} (must be exactly 13).")
+                    elif len(chunk_data) == 13:
+                        width, height, bit_depth, color_type, comp_m, filt_m, inter_m = struct.unpack(">IIBBBBB", chunk_data)
+                        valid_combos = {
+                            0: (1, 2, 4, 8, 16),
+                            2: (8, 16),
+                            3: (1, 2, 4, 8),
+                            4: (8, 16),
+                            6: (8, 16),
+                        }
+                        if color_type not in valid_combos or bit_depth not in valid_combos[color_type]:
+                            v_msg = f"Invalid bit_depth={bit_depth} for color_type={color_type}"
+                            result["semantic_violations"].append(v_msg)
+                            result["findings"].append(f"PNG Semantic Violation: {v_msg}.")
 
                 result["total_chunks"] += 1
 
@@ -87,24 +110,32 @@ class C2StegoDetector:
                         "calculated_crc": hex(calculated_crc),
                     })
                     result["findings"].append(
-                        f"Anomaly / Suspicious: CRC32 mismatch in {chunk_type.decode('latin-1', errors='ignore')} chunk at offset {hex(pos)}. (Could be stego, network corruption, or faulty encoder)"
+                        f"Anomaly / Suspicious: CRC32 mismatch in {chunk_type.decode('latin-1', errors='ignore')} chunk at offset {hex(pos)}."
                     )
 
-                # Check for non-standard custom chunk names
+                # Check for non-standard custom / private chunk names
                 if chunk_type not in standard_chunks:
                     chunk_name = chunk_type.decode("latin-1", errors="ignore")
+                    is_private = (chunk_type[1] & 32) != 0  # 2nd letter lowercase = private
                     result["non_standard_chunks"].append({
                         "chunk_type": chunk_name,
                         "length": length,
                         "offset": pos,
+                        "is_private": is_private,
                     })
-                    # Neutral wording for unknown chunks
-                    result["findings"].append(f"Unknown / non-standard PNG chunk: '{chunk_name}' ({length} bytes).")
+                    if not is_private:
+                        result["findings"].append(f"Unregistered ancillary PNG chunk: '{chunk_name}' ({length} bytes).")
 
-                # IDAT inspection
+                # IDAT inspection & continuity tracking
                 if chunk_type == b"IDAT":
+                    if saw_idat and idat_consecutive_broken:
+                        result["semantic_violations"].append("Non-contiguous IDAT sequence.")
+                        result["findings"].append("PNG Semantic Violation: IDAT chunks are split by non-IDAT chunks.")
+                    saw_idat = True
                     result["idat_count"] += 1
                     idat_sizes.append(length)
+                elif saw_idat and chunk_type != b"IEND":
+                    idat_consecutive_broken = True
 
                 # zTXt / iTXt compressed metadata inspection
                 if chunk_type in (b"zTXt", b"iTXt"):
@@ -113,18 +144,14 @@ class C2StegoDetector:
                         null_idx = chunk_data.find(b"\x00")
                         if null_idx != -1:
                             keyword = chunk_data[:null_idx].decode("latin-1", errors="ignore")
-                            
                             decompressed = b""
                             if chunk_type == b"zTXt":
-                                # zTXt: keyword + null + compression method (1) + compressed_text
                                 compressed_body = chunk_data[null_idx + 2 :]
                                 decompressed = zlib.decompress(compressed_body)
                             elif chunk_type == b"iTXt":
-                                # iTXt: keyword + null + comp_flag (1) + comp_method (1) + lang + null + trans_keyword + null + text
                                 if len(chunk_data) > null_idx + 2:
                                     comp_flag = chunk_data[null_idx + 1]
                                     if comp_flag == 1:
-                                        # It is compressed
                                         rest = chunk_data[null_idx + 3 :]
                                         lang_null = rest.find(b"\x00")
                                         if lang_null != -1:
@@ -139,19 +166,31 @@ class C2StegoDetector:
                                     "uncompressed_size": len(decompressed),
                                     "chunk_type": chunk_type.decode("latin-1"),
                                 })
-                                result["findings"].append(
-                                    f"Compressed metadata found in {chunk_type.decode('latin-1')} chunk (Keyword: {keyword}, Uncompressed: {len(decompressed)} bytes)."
-                                )
                     except Exception as e:
                         result["findings"].append(f"Failed to decompress {chunk_type.decode('latin-1')} chunk data: {e}")
 
-                pos += 12 + length
+                # IEND validation
                 if chunk_type == b"IEND":
                     has_iend = True
+                    if length != 0:
+                        result["semantic_violations"].append(f"IEND length {length} != 0.")
+                        result["findings"].append(f"PNG Semantic Violation: IEND length is {length} (must be 0).")
                     break
+
+                pos += 12 + length
             except Exception as e:
                 result["findings"].append(f"Structural Anomaly: Malformed PNG chunk parsing stopped at offset {hex(pos)}. Error: {str(e)}")
                 break
+
+        # IDAT fragmentation anomaly calculation
+        if len(idat_sizes) >= 3:
+            tiny_idats = sum(1 for s in idat_sizes if s < 64)
+            if tiny_idats >= 3 or (len(idat_sizes) > 10 and max(idat_sizes) / (min(idat_sizes) + 1) > 500):
+                result["idat_fragmentation_detected"] = True
+                result["idat_fragmentation_score"] = round(min(100.0, tiny_idats * 25.0), 2)
+                result["findings"].append(
+                    f"Covert Channel Anomaly: Highly fragmented IDAT sequence ({tiny_idats} tiny chunks, score {result['idat_fragmentation_score']}/100)."
+                )
 
         if not has_ihdr:
             result["findings"].append("Structural Anomaly: Missing IHDR chunk.")
@@ -258,6 +297,10 @@ class C2StegoDetector:
             "jsteg": None,
             "f5": None,
             "outguess": None,
+            "c2_stego_detected": False,
+            "jsteg_detected": False,
+            "f5_detected": False,
+            "outguess_detected": False,
             "findings": [],
         }
         if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
@@ -272,6 +315,8 @@ class C2StegoDetector:
             jsteg_res = estimate_jsteg_payload(raw_bytes)
             result["jsteg"] = jsteg_res
             if jsteg_res.get("status") == "PAYLOAD_DETECTED":
+                result["jsteg_detected"] = True
+                result["c2_stego_detected"] = True
                 result["findings"].append(
                     f"JSteg DCT Payload Detected: {jsteg_res.get('detected_format')} signature in DCT AC coefficient LSB stream."
                 )
@@ -279,6 +324,8 @@ class C2StegoDetector:
             f5_res = analyze_f5_capacity(raw_bytes)
             result["f5"] = f5_res
             if f5_res.get("f5_indicator"):
+                result["f5_detected"] = True
+                result["c2_stego_detected"] = True
                 result["findings"].append(
                     f"F5 Steganography Anomaly: AC coefficient LSB imbalance ({f5_res.get('lsb_anomaly_score')}%) indicates potential F5 matrix embedding."
                 )
@@ -286,11 +333,13 @@ class C2StegoDetector:
             outguess_res = analyze_outguess_stats(raw_bytes)
             result["outguess"] = outguess_res
             if outguess_res.get("outguess_indicator"):
+                result["outguess_detected"] = True
+                result["c2_stego_detected"] = True
                 result["findings"].append(
                     f"OutGuess 0.2 DCT Statistical Anomaly: Histogram symmetry score {outguess_res.get('histogram_symmetry_score')} indicates artificial preservation."
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            result["findings"].append(f"JPEG DCT Stego Analysis Warning: {e}")
 
         return result
 

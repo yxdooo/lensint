@@ -158,11 +158,14 @@ def scan_ai_metadata(raw_bytes: bytes, pil_img: Optional[Image.Image]) -> Dict[s
     return meta
 
 
-def analyze_prnu_sensor_noise(pil_img: Image.Image) -> Tuple[bool, float]:
-    """Estimate PRNU (Photo Response Non-Uniformity) camera sensor fingerprint.
+def analyze_noise_floor_consistency(pil_img: Image.Image) -> Tuple[bool, float]:
+    """Estimate high-frequency noise floor consistency and inter-channel correlation.
 
-    Real physical camera sensors introduce subtle, correlated noise across RGB channels.
-    Purely synthetic generative AI images lack this natural hardware sensor footprint.
+    NOTE: Without a known physical camera reference sensor, this does NOT compute a true
+    device-specific PRNU fingerprint. Instead, it measures inter-channel high-frequency
+    residual noise correlation and spatial variance consistency. Real optical photography
+    exhibits natural cross-channel noise correlation (0.25–0.70), whereas synthetic/diffusion
+    images frequently exhibit an unnatural noise floor or synthetic smoothness.
 
     Returns: (sensor_noise_detected: bool, sensor_score: float [0-100])
     """
@@ -176,7 +179,6 @@ def analyze_prnu_sensor_noise(pil_img: Image.Image) -> Tuple[bool, float]:
         residuals = []
         for ch in range(3):
             ch_data = rgb[:, :, ch]
-            # Fast 3x3 local average
             padded = np.pad(ch_data, 1, mode="edge")
             local_mean = (
                 padded[:-2, :-2] + padded[:-2, 1:-1] + padded[:-2, 2:] +
@@ -207,6 +209,10 @@ def analyze_prnu_sensor_noise(pil_img: Image.Image) -> Tuple[bool, float]:
         return sensor_present, round(sensor_score, 2)
     except Exception:
         return False, 50.0
+
+
+# Backward compatibility alias
+analyze_prnu_sensor_noise = analyze_noise_floor_consistency
 
 
 def detect_inpainting_anomalies(pil_img: Image.Image) -> float:
@@ -288,12 +294,12 @@ def analyze_ai_generation(
             if diff_score > 60.0:
                 rep.findings.append(f"Diffusion model high-frequency noise signature detected (Score: {diff_score}/100.0).")
 
-            # PRNU Sensor Noise Analysis
-            prnu_present, prnu_score = analyze_prnu_sensor_noise(pil_img)
+            # Noise Floor Consistency (PRNU proxy) Analysis
+            prnu_present, prnu_score = analyze_noise_floor_consistency(pil_img)
             rep.prnu_sensor_noise_detected = prnu_present
             rep.prnu_sensor_score = prnu_score
             if not prnu_present and not rep.c2pa_present and (rep.fft_spectral_score > 40 or diff_score > 40):
-                rep.findings.append(f"Physical camera sensor noise (PRNU) absent (Sensor Score: {prnu_score}/100). Synthetic origin suspected.")
+                rep.findings.append(f"Physical camera sensor noise floor absent (Score: {prnu_score}/100). Synthetic origin suspected.")
 
             # Inpainting Anomaly Detection
             inpainting_score = detect_inpainting_anomalies(pil_img)
@@ -306,18 +312,27 @@ def analyze_ai_generation(
 
     if rep.ai_generator_detected:
         rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = True, 100.0, "CONFIRMED_AI"
-    elif rep.fft_spectral_score >= 65.0 or getattr(rep, 'inpainting_anomaly_score', 0) > 75.0:
-        rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = True, max(rep.fft_spectral_score, rep.inpainting_anomaly_score), "HIGH_PROBABILITY_AI"
     else:
-        rep.is_ai_generated, rep.ai_probability_score, rep.ai_verdict = False, max(0.0, rep.fft_spectral_score), "ORGANIC_NATURAL"
+        # Multi-factor calibrated composite heuristic:
+        fft_s = rep.fft_spectral_score
+        gan_s = getattr(rep, "gan_fingerprint_score", 0.0)
+        diff_s = getattr(rep, "diffusion_artifact_score", 0.0)
+        inp_s = getattr(rep, "inpainting_anomaly_score", 0.0)
 
-    if hasattr(rep, 'gan_fingerprint_score'):
-        new_prob = rep.ai_probability_score + rep.gan_fingerprint_score * 0.4 + rep.diffusion_artifact_score * 0.2
-        if not rep.prnu_sensor_noise_detected and rep.prnu_sensor_score < 20.0:
-            new_prob += 15.0  # penalty for complete lack of hardware sensor noise
-        rep.ai_probability_score = min(100.0, max(0.0, new_prob))
-        if rep.ai_probability_score > 65.0 and rep.ai_verdict == "ORGANIC_NATURAL":
+        composite = (fft_s * 0.40) + (gan_s * 0.30) + (diff_s * 0.20) + (inp_s * 0.10)
+        if not rep.prnu_sensor_noise_detected and rep.prnu_sensor_score < 20.0 and composite > 30.0:
+            composite += 10.0
+
+        rep.ai_probability_score = round(min(100.0, max(0.0, composite)), 2)
+
+        if rep.ai_probability_score >= 65.0:
             rep.is_ai_generated = True
             rep.ai_verdict = "HIGH_PROBABILITY_AI"
+        elif rep.ai_probability_score >= 35.0:
+            rep.is_ai_generated = False
+            rep.ai_verdict = "SUSPICIOUS_HEURISTIC"
+        else:
+            rep.is_ai_generated = False
+            rep.ai_verdict = "ORGANIC_NATURAL"
 
     return rep

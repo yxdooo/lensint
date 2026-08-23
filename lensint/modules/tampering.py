@@ -352,30 +352,61 @@ def analyze_block_grid_inconsistency(pil_img: Image.Image) -> Tuple[bool, Tuple[
 # 7. Chromatic Aberration Radial Optical Vector Consistency
 # ============================================================================
 def analyze_chromatic_aberration(pil_img: Image.Image) -> Tuple[float, bool]:
-    rgb = np.array(pil_img.convert("RGB"), dtype=np.float32)
-    h, w, _ = rgb.shape
-    if h < 100 or w < 100 or np.std(rgb) < 2.0:
+    """Analyze Edge-Aligned Lateral Chromatic Aberration (LCA) consistency.
+
+    Real camera lenses cause wavelength-dependent radial refraction (color fringes)
+    perpendicular to high-contrast edges in the periphery, directed away from the
+    optical center. Spliced or synthetic images lack this optical radial alignment.
+
+    Returns:
+        (inconsistency_score: float [0-100], aberration_detected: bool)
+    """
+    try:
+        rgb = np.array(pil_img.convert("RGB"), dtype=np.float32)
+        h, w, _ = rgb.shape
+        if h < 100 or w < 100 or float(np.std(rgb)) < 2.0:
+            return 0.0, False
+
+        # Grayscale luminance for edge detection
+        gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+        gy, gx = np.gradient(gray)
+        grad_mag = np.sqrt(gx ** 2 + gy ** 2)
+
+        cy, cx = h / 2.0, w / 2.0
+        y_coords, x_coords = np.ogrid[:h, :w]
+        # Radial vector from optical center (image center)
+        rx = (x_coords - cx)
+        ry = (y_coords - cy)
+        radial_dist = np.sqrt(rx ** 2 + ry ** 2)
+
+        # Peripheral zone (> 30% from center) where LCA is optically strongest
+        outer_mask = (radial_dist > min(h, w) * 0.30) & (grad_mag > 15.0)
+        if np.sum(outer_mask) < 64:
+            return 0.0, False
+
+        # Channel difference gradients (R - B fringe)
+        diff_rb = rgb[:, :, 0] - rgb[:, :, 2]
+        d_rby, d_rbx = np.gradient(diff_rb)
+
+        # In true LCA, the R-B fringe gradient aligns with the radial vector (rx, ry)
+        norm_r = radial_dist[outer_mask] + 1e-6
+        unit_rx = rx[outer_mask] / norm_r
+        unit_ry = ry[outer_mask] / norm_r
+
+        grad_rb_mag = np.sqrt(d_rbx[outer_mask] ** 2 + d_rby[outer_mask] ** 2) + 1e-6
+        unit_gx = d_rbx[outer_mask] / grad_rb_mag
+        unit_gy = d_rby[outer_mask] / grad_rb_mag
+
+        # Alignment cos(theta)
+        alignment = np.abs(unit_rx * unit_gx + unit_ry * unit_gy)
+        var_bleed = float(np.var(diff_rb[~outer_mask])) if np.sum(~outer_mask) > 100 else 0.0
+
+        misalignment = float(1.0 - np.mean(alignment))
+        inconsistency_score = round(min(100.0, max(0.0, (misalignment * 60.0) + min(40.0, var_bleed * 0.05))), 2)
+
+        return inconsistency_score, inconsistency_score >= 65.0
+    except Exception:
         return 0.0, False
-
-    diff_rg = rgb[:, :, 0] - rgb[:, :, 1]
-    diff_bg = rgb[:, :, 2] - rgb[:, :, 1]
-
-    cy, cx = h / 2.0, w / 2.0
-    y_coords, x_coords = np.ogrid[:h, :w]
-    radial_dist = np.sqrt((x_coords - cx) ** 2 + (y_coords - cy) ** 2)
-
-    outer_mask = radial_dist > min(h, w) * 0.35
-    if not np.any(outer_mask):
-        return 0.0, False
-
-    outer_rg = diff_rg[outer_mask]
-    outer_bg = diff_bg[outer_mask]
-
-    var_rg = float(np.var(outer_rg))
-    var_bg = float(np.var(outer_bg))
-    aberration_variance = round(min(100.0, (var_rg + var_bg) * 0.08), 2)
-
-    return aberration_variance, aberration_variance >= 65.0
 
 
 # ============================================================================

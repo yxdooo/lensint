@@ -250,3 +250,47 @@ class C2StegoDetector:
                 "status": "SUSPICIOUS_SIGNATURE_ONLY",
             }
         return None
+
+    @staticmethod
+    def analyze_jpeg_dct_stego(raw_bytes: bytes) -> Dict[str, Any]:
+        """Analyze JPEG in DCT domain for JSteg, F5, and OutGuess steganography."""
+        result: Dict[str, Any] = {
+            "jsteg": None,
+            "f5": None,
+            "outguess": None,
+            "findings": [],
+        }
+        if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
+            return result
+
+        try:
+            from lensint.modules.jpeg_dct import (
+                estimate_jsteg_payload,
+                analyze_f5_capacity,
+                analyze_outguess_stats,
+            )
+            jsteg_res = estimate_jsteg_payload(raw_bytes)
+            result["jsteg"] = jsteg_res
+            if jsteg_res.get("status") == "PAYLOAD_DETECTED":
+                result["findings"].append(
+                    f"JSteg DCT Payload Detected: {jsteg_res.get('detected_format')} signature in DCT AC coefficient LSB stream."
+                )
+
+            f5_res = analyze_f5_capacity(raw_bytes)
+            result["f5"] = f5_res
+            if f5_res.get("f5_indicator"):
+                result["findings"].append(
+                    f"F5 Steganography Anomaly: AC coefficient LSB imbalance ({f5_res.get('lsb_anomaly_score')}%) indicates potential F5 matrix embedding."
+                )
+
+            outguess_res = analyze_outguess_stats(raw_bytes)
+            result["outguess"] = outguess_res
+            if outguess_res.get("outguess_indicator"):
+                result["findings"].append(
+                    f"OutGuess 0.2 DCT Statistical Anomaly: Histogram symmetry score {outguess_res.get('histogram_symmetry_score')} indicates artificial preservation."
+                )
+        except Exception:
+            pass
+
+        return result
+

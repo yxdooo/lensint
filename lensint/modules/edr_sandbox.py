@@ -150,21 +150,129 @@ EDRFileDropMonitor = DirectoryWatcher
 class SandboxIngestionEngine:
     """Ingests and correlates dynamic sandbox execution captures (CAPE / Cuckoo).
     
-    NOTE: Currently only extracts static visual artifacts (Screenshots/Drops) from the sandbox output. 
-    It does not parse raw Cuckoo telemetry JSONs (process trees, API logs).
+    Supports:
+    1. Static visual screenshots and OCR credential scanning.
+    2. Dynamic execution telemetry parsing (Cuckoo/CAPE `report.json` process trees,
+       network IOCs, dropped files, and triggered signatures).
     """
 
     @staticmethod
+    def parse_cuckoo_report(report_json_path: str) -> Dict[str, Any]:
+        """Parse raw Cuckoo / CAPE dynamic analysis telemetry JSON report.
+
+        Extracts process tree, dropped file IOCs, network communication IOCs,
+        and high-severity dynamic signatures.
+        """
+        import json
+        telemetry: Dict[str, Any] = {
+            "is_cuckoo_report": False,
+            "cuckoo_score": 0.0,
+            "target_file": None,
+            "process_tree": [],
+            "network_iocs": {"ips": [], "domains": []},
+            "dropped_files": [],
+            "triggered_signatures": [],
+            "threat_verdict": "CLEAN",
+        }
+        if not os.path.exists(report_json_path):
+            return telemetry
+
+        try:
+            with open(report_json_path, "r", encoding="utf-8", errors="ignore") as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict) or ("info" not in data and "behavior" not in data and "signatures" not in data):
+                return telemetry
+
+            telemetry["is_cuckoo_report"] = True
+
+            # 1. Info & Score
+            info = data.get("info", {})
+            if isinstance(info, dict):
+                score = float(info.get("score", 0.0))
+                telemetry["cuckoo_score"] = score
+                if "target" in data and isinstance(data["target"], dict):
+                    telemetry["target_file"] = data["target"].get("file", {}).get("name")
+
+            # 2. Behavior / Process tree
+            behavior = data.get("behavior", {})
+            if isinstance(behavior, dict):
+                processes = behavior.get("processes", [])
+                for p in processes:
+                    if isinstance(p, dict):
+                        telemetry["process_tree"].append({
+                            "pid": p.get("process_id"),
+                            "parent_id": p.get("parent_id"),
+                            "process_name": p.get("process_name"),
+                            "command_line": p.get("command_line"),
+                        })
+
+            # 3. Network IOCs
+            network = data.get("network", {})
+            if isinstance(network, dict):
+                hosts = network.get("hosts", [])
+                for h in hosts:
+                    if isinstance(h, str) and h not in telemetry["network_iocs"]["ips"]:
+                        telemetry["network_iocs"]["ips"].append(h)
+                    elif isinstance(h, dict) and "ip" in h and h["ip"] not in telemetry["network_iocs"]["ips"]:
+                        telemetry["network_iocs"]["ips"].append(h["ip"])
+                domains = network.get("domains", [])
+                for d in domains:
+                    if isinstance(d, dict) and "domain" in d and d["domain"] not in telemetry["network_iocs"]["domains"]:
+                        telemetry["network_iocs"]["domains"].append(d["domain"])
+                    elif isinstance(d, str) and d not in telemetry["network_iocs"]["domains"]:
+                        telemetry["network_iocs"]["domains"].append(d)
+
+            # 4. Dropped Files
+            dropped = data.get("dropped", [])
+            if isinstance(dropped, list):
+                for df in dropped:
+                    if isinstance(df, dict):
+                        telemetry["dropped_files"].append({
+                            "name": df.get("name"),
+                            "sha256": df.get("sha256"),
+                            "size": df.get("size"),
+                        })
+
+            # 5. Triggered Signatures
+            sigs = data.get("signatures", [])
+            if isinstance(sigs, list):
+                for s in sigs:
+                    if isinstance(s, dict):
+                        severity = s.get("severity", 1)
+                        telemetry["triggered_signatures"].append({
+                            "name": s.get("name"),
+                            "description": s.get("description"),
+                            "severity": severity,
+                        })
+
+            # Verdict calculation
+            score = telemetry["cuckoo_score"]
+            high_sev_sigs = [s for s in telemetry["triggered_signatures"] if s.get("severity", 0) >= 3]
+            if score >= 7.0 or len(high_sev_sigs) >= 2:
+                telemetry["threat_verdict"] = "MALICIOUS"
+            elif score >= 3.5 or len(telemetry["triggered_signatures"]) > 0:
+                telemetry["threat_verdict"] = "SUSPICIOUS"
+            else:
+                telemetry["threat_verdict"] = "CLEAN"
+
+        except Exception as e:
+            logger.error(f"Error parsing Cuckoo report {report_json_path}: {e}")
+
+        return telemetry
+
+    @staticmethod
     def analyze_sandbox_artifacts(sandbox_dir: str) -> Dict[str, Any]:
-        """Analyze screenshots and memory artifacts captured from a sandbox run."""
+        """Analyze screenshots, memory artifacts, and Cuckoo/CAPE telemetry reports."""
         from lensint.core.analyzer import ImageAnalyzer
-        findings = {
+        findings: Dict[str, Any] = {
             "sandbox_dir": sandbox_dir,
             "screenshots_analyzed": 0,
             "failed_ingestions": 0,
             "high_risk_captures": [],
             "extracted_credentials": [],
             "malware_signatures": [],
+            "cuckoo_telemetry": None,
             "overall_sandbox_verdict": "CLEAN",
         }
 
@@ -177,9 +285,23 @@ class SandboxIngestionEngine:
         for root, _, files in os.walk(sandbox_dir):
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, sandbox_dir)
+
+                # Check for Cuckoo JSON report
+                if file.lower() in ("report.json", "cuckoo.json") or (ext == ".json" and "report" in file.lower()):
+                    try:
+                        cuckoo_res = SandboxIngestionEngine.parse_cuckoo_report(full_path)
+                        if cuckoo_res.get("is_cuckoo_report"):
+                            findings["cuckoo_telemetry"] = cuckoo_res
+                            if cuckoo_res.get("threat_verdict") == "MALICIOUS":
+                                highest_score = max(highest_score, 85.0)
+                            elif cuckoo_res.get("threat_verdict") == "SUSPICIOUS":
+                                highest_score = max(highest_score, 50.0)
+                    except Exception as e:
+                        logger.error(f"Failed to ingest Cuckoo report {rel_path}: {e}")
+
                 if ext in supported_exts:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, sandbox_dir)
                     try:
                         res = ImageAnalyzer(full_path, use_cache=False).analyze()
                         findings["screenshots_analyzed"] += 1

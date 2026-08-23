@@ -192,6 +192,9 @@ class ImageAnalyzer:
             freq_markers = C2StegoDetector.analyze_frequency_stego_markers(raw_bytes)
             for fm in freq_markers:
                 result.stego.findings.append(f"C2 Stego Frequency Carrier: {fm['tool']} ({fm['confidence']}).")
+            dct_stego = C2StegoDetector.analyze_jpeg_dct_stego(raw_bytes)
+            for f in dct_stego.get("findings", []):
+                result.stego.findings.append(f)
 
             # Neural Prompt Injections in metadata / OCR
             from lensint.modules.neural_ai import scan_prompt_injections
@@ -304,34 +307,40 @@ class ImageAnalyzer:
             findings.append(f"Confidential Data Leak: {leak_count} secret(s) discovered including {first_type} ({first_red}).")
 
         # Bayesian Log-Odds Fusion (Uses literature-derived Likelihood Ratios)
-        from lensint.modules.benchmarks import BayesianForensicFusionEngine
-        
-        has_c2_stego = any("C2 Stego" in f for f in result.stego.findings)
-        has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
-        
-        calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
-            ela_score=result.tampering.ela_difference_max,
-            copy_move_detected=result.tampering.copy_move_detected,
-            dqt_anomaly=result.tampering.dqt_found,
-            cfa_anomaly=result.tampering.cfa_tampering_detected,
-            fft_ai_score=result.ai_detection.fft_spectral_score,
-            rs_stego_detected=result.stego.rs_steganalysis_detected,
-            chi_square_detected=result.stego.lsb_stego_detected,
-            metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
-            malware_threat=result.malware.has_threats,
-            confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
-            c2_stego_detected=has_c2_stego,
-            prompt_injection=has_prompt_injection
-        )
+        try:
+            from lensint.modules.benchmarks import BayesianForensicFusionEngine
+            
+            has_c2_stego = any("C2 Stego" in f or "JSteg DCT" in f or "F5 Steganography" in f or "OutGuess 0.2" in f for f in result.stego.findings)
+            has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
+            
+            calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
+                ela_score=result.tampering.ela_difference_max,
+                copy_move_detected=result.tampering.copy_move_detected,
+                dqt_anomaly=result.tampering.dqt_found,
+                cfa_anomaly=result.tampering.cfa_tampering_detected,
+                fft_ai_score=result.ai_detection.fft_spectral_score,
+                rs_stego_detected=result.stego.rs_steganalysis_detected,
+                chi_square_detected=result.stego.lsb_stego_detected,
+                metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
+                malware_threat=result.malware.has_threats,
+                confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
+                c2_stego_detected=has_c2_stego,
+                prompt_injection=has_prompt_injection
+            )
 
-        result.fusion_telemetry = fusion_log
-        
-        # Override risk level dynamically via Calibrated Fusion
-        result.overall_risk_score = calibrated_score
-        result.overall_risk_level = calibrated_verdict
+            result.fusion_telemetry = fusion_log
+            
+            # Override risk level dynamically via Calibrated Fusion
+            result.overall_risk_score = calibrated_score
+            result.overall_risk_level = calibrated_verdict
 
-        if calibrated_verdict in ("HIGH", "CRITICAL"):
-            findings.append(f"Bayesian Fusion Engine escalated risk to {calibrated_verdict} (Risk: {calibrated_score:.1f}/100.0).")
+            if calibrated_verdict in ("HIGH", "CRITICAL"):
+                findings.append(f"Bayesian Fusion Engine escalated risk to {calibrated_verdict} (Risk: {calibrated_score:.1f}/100.0).")
+        except Exception as e:
+            import logging
+            logging.getLogger("lensint.analyzer").error(f"Bayesian Fusion Error: {e}")
+            result.overall_risk_score = 0.0
+            result.overall_risk_level = "ANALYSIS_ERROR"
 
         # Failsafe escalation for extremely deterministic threats
         if result.malware.has_threats or result.stego.has_overlay_data:

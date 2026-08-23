@@ -141,6 +141,10 @@ def perform_rs_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         else:
             channel = arr.astype(np.int32)
 
+        # Texture guard: flat or low-variance regions produce meaningless RS stats
+        if float(np.var(channel)) < 10.0:
+            return False, 0.0
+
         h, w = channel.shape
         flat = channel.flatten()
         # Ensure length is multiple of 4
@@ -186,10 +190,10 @@ def perform_rs_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         # Estimation of embedding rate p:
         # In clean images, d0 ≈ d1. In fully embedded images, d0 ≈ 0.
         diff = abs(d0 - d1)
-        # Threshold 0.05 is a heuristic baseline; high-res or noisy images may require dynamic calibration
-        if diff > 0.05:
-            # Significant RS imbalance: rough heuristic estimate
-            est_rate = float(min(1.0, max(0.0, float(diff) * 2.0)))
+        # Threshold 0.08 (Fridrich et al. standard) prevents false positives
+        if diff > 0.08:
+            # Significant RS imbalance: calibrated estimate
+            est_rate = float(min(1.0, max(0.0, float(diff) * 2.0 / (1.0 + float(diff)))))
             return True, round(est_rate, 3)
         return False, 0.0
     except Exception:

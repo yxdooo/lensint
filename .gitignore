@@ -30,6 +30,8 @@ env/
 *.json
 *.html
 *.bin
+.coverage
+htmlcov/
 make_files.py
 !sample_images/**
 !lensint/web/**

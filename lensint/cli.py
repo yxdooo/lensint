@@ -312,22 +312,25 @@ def main(args_list: List[str] = None) -> int:
 
             if args.extract_overlay:
                 out_overlay = _batch_path(args.extract_overlay, target_stem, target_hash)
-                if result.stego.has_overlay_data:
-                    from lensint.modules.stego import detect_overlay_data
-                    with open(current_target, "rb") as f:
-                        raw_b = f.read()
-                    _, _, _, ov_bytes = detect_overlay_data(raw_b)
-                    if ov_bytes:
-                        with open(out_overlay, "wb") as f_out:
-                            f_out.write(ov_bytes)
-                        with print_lock:
-                            console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
+                from lensint.modules.stego import detect_overlay_data
+                has_ov, _, _, ov_bytes = detect_overlay_data(raw_bytes)
+                if has_ov and ov_bytes:
+                    parent_dir = os.path.dirname(os.path.abspath(out_overlay))
+                    if parent_dir:
+                        os.makedirs(parent_dir, exist_ok=True)
+                    with open(out_overlay, "wb") as f_out:
+                        f_out.write(ov_bytes)
+                    with print_lock:
+                        console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
                 else:
                     with print_lock:
                         console.print(f"[yellow]No overlay data found in {os.path.basename(current_target)}.[/yellow]")
 
             if args.json:
                 json_path = _batch_path(args.json, target_stem, target_hash)
+                parent_dir = os.path.dirname(os.path.abspath(json_path))
+                if parent_dir:
+                    os.makedirs(parent_dir, exist_ok=True)
                 with open(json_path, "w", encoding="utf-8") as jf:
                     jf.write(render_json_report(result))
                 with print_lock:
@@ -335,6 +338,9 @@ def main(args_list: List[str] = None) -> int:
 
             if args.html:
                 html_path = _batch_path(args.html, target_stem, target_hash)
+                parent_dir = os.path.dirname(os.path.abspath(html_path))
+                if parent_dir:
+                    os.makedirs(parent_dir, exist_ok=True)
                 with open(html_path, "w", encoding="utf-8") as hf:
                     hf.write(render_html_report(result))
                 with print_lock:
@@ -348,18 +354,16 @@ def main(args_list: List[str] = None) -> int:
                     console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
 
             if args.misp:
-                from lensint.reporters.misp_rep import render_misp_report
+                from lensint.reporters.misp_rep import export_misp_event
                 misp_path = _batch_path(args.misp, target_stem, target_hash)
-                with open(misp_path, "w", encoding="utf-8") as mf:
-                    mf.write(render_misp_report(result))
+                export_misp_event(result, misp_path)
                 with print_lock:
                     console.print(f"[bold green]MISP JSON event written to:[/bold green] {misp_path}")
 
             if args.generate_yara:
-                from lensint.reporters.yara_gen import generate_yara_rule
+                from lensint.reporters.yara_gen import export_yara_rule
                 yara_path = _batch_path(args.generate_yara, target_stem, target_hash)
-                with open(yara_path, "w", encoding="utf-8") as yf:
-                    yf.write(generate_yara_rule(result))
+                export_yara_rule(result, yara_path)
                 with print_lock:
                     console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
 

@@ -78,6 +78,23 @@ class NeuralDeepfakePipeline:
             "anomalies": res.get("anomalies", []),
         }
 
+    @staticmethod
+    def validate_manifest(manifest: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """Validate AI model manifest schema and class constraints."""
+        expected_classes = manifest.get("expected_classes")
+        if not expected_classes or not isinstance(expected_classes, int) or expected_classes <= 0:
+            return False, "Manifest must specify positive integer 'expected_classes'."
+        
+        default_idx = 0 if expected_classes == 1 else 1
+        class_idx = manifest.get("ai_class_index", default_idx)
+        if class_idx < 0 or class_idx >= expected_classes:
+            return False, f"Manifest ai_class_index {class_idx} is out of bounds for {expected_classes} classes."
+        
+        activation = manifest.get("output_activation", "").lower()
+        if activation and activation not in ("softmax", "sigmoid", "none"):
+            return False, "Manifest 'output_activation' must be 'softmax', 'sigmoid', or 'none'."
+        return True, None
+
     def predict_synthetic_probability(self, pil_img: Image.Image) -> Dict[str, Any]:
         """Predict synthetic generation likelihood using ONNX model or fallback to heuristic anomaly scores.
         
@@ -201,7 +218,8 @@ class NeuralDeepfakePipeline:
             if activation not in ("softmax", "sigmoid", "none"):
                 raise ValueError("Manifest 'output_activation' must be explicitly 'softmax', 'sigmoid', or 'none'. 'auto' is not allowed.")
                 
-            class_idx = manifest.get("ai_class_index", 1)
+            default_idx = 0 if expected_classes == 1 else 1
+            class_idx = manifest.get("ai_class_index", default_idx)
             
             if class_idx < 0 or class_idx >= expected_classes:
                 raise IndexError(f"Manifest ai_class_index {class_idx} is out of bounds for {expected_classes} classes.")

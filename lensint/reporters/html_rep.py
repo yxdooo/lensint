@@ -277,5 +277,8 @@ body {{
 
 def export_html_report(result: AnalysisResult, output_path: str) -> None:
     content = render_html_report(result)
+    parent_dir = os.path.dirname(os.path.abspath(output_path))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)

@@ -25,11 +25,9 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
     strings_lines = []
     conditions = []
 
-    # 1. Hashes in strings (if useful for text scanning)
-    strings_lines.append(f'        $sha256 = "{result.integrity.sha256}" ascii wide')
-
     # 2. Magic byte container header
     has_magic = False
+    is_tiff = False
     if result.integrity.detected_format == "JPEG":
         strings_lines.append('        $magic = { FF D8 FF }')
         has_magic = True
@@ -47,7 +45,9 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
         has_magic = True
     elif result.integrity.detected_format == "TIFF":
         strings_lines.append('        $magic = { 49 49 2A 00 }')
+        strings_lines.append('        $magic_be = { 4D 4D 00 2A }')
         has_magic = True
+        is_tiff = True
 
     # 3. YARA matched patterns or threat signatures
     str_idx = 1
@@ -78,7 +78,9 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
         str_idx += 1
 
     # 6. Conditions
-    if has_magic:
+    if is_tiff:
+        conditions.append("($magic at 0 or $magic_be at 0)")
+    elif has_magic:
         conditions.append("$magic at 0")
 
     active_groups = []
@@ -119,3 +121,16 @@ rule {clean_name}
 }}
 """
     return rule_template.strip()
+    
+
+def export_yara_rule(result: AnalysisResult, output_path: str, rule_name: Optional[str] = None) -> str:
+    """Export deployable YARA rule to specified path, ensuring parent directories exist."""
+    import os
+    abs_path = os.path.abspath(output_path)
+    parent_dir = os.path.dirname(abs_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    rule_str = generate_yara_rule(result, rule_name)
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(rule_str)
+    return abs_path

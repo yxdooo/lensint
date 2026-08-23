@@ -249,13 +249,13 @@ def detect_inpainting_anomalies(pil_img: Image.Image) -> float:
             return 0.0
 
         var_array = np.array(variances)
-        # Ratio of maximum local gradient variance to median gradient variance
-        median_var = float(np.median(var_array)) + 1e-6
-        max_var = float(np.max(var_array))
-        ratio = max_var / median_var
+        # Robust percentile ratio to prevent flat-field false positive spikes
+        p95_var = float(np.percentile(var_array, 95))
+        median_var = max(15.0, float(np.median(var_array)))
+        ratio = p95_var / median_var
 
         # Inpainted regions exhibit severe local variance discrepancy
-        anomaly_score = min(100.0, max(0.0, (ratio - 2.5) * 20.0))
+        anomaly_score = min(100.0, max(0.0, (ratio - 3.5) * 15.0))
         return round(anomaly_score, 2)
     except Exception:
         return 0.0

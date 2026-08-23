@@ -134,3 +134,19 @@ def render_misp_report(result: AnalysisResult, event_info: str = "LENSINT Image 
     }
 
     return json.dumps(misp_event, indent=2, ensure_ascii=False)
+
+
+render_misp_event = render_misp_report
+
+
+def export_misp_event(result: AnalysisResult, output_path: str, event_info: str = "LENSINT Forensic Investigation") -> str:
+    """Export MISP JSON event to specified path, ensuring parent directories exist."""
+    import os
+    abs_path = os.path.abspath(output_path)
+    parent_dir = os.path.dirname(abs_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    content = render_misp_report(result, event_info=event_info)
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return abs_path

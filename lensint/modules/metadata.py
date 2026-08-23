@@ -160,20 +160,6 @@ def _detect_social_media_provenance(raw_bytes: bytes, pil_img: Optional[Image.Im
     return None
 
 
-    created = parse_dt(report.datetime_original) or parse_dt(report.datetime_digitized)
-    modified = parse_dt(report.datetime_modified)
-    
-    if created and modified:
-        delta = (modified - created).total_seconds()
-        # If modified is noticeably in the past relative to created
-        if delta < -60:
-            report.timestamp_anomalies.append("Timestamp Anomaly: File modification date predates creation date.")
-            report.software_footprint_findings.append(f"Timestamp Anomaly: File modification date ({modified}) predates creation date ({created}).")
-        # If modified significantly after created (e.g. > 1 day)
-        elif delta > 86400:
-            report.software_footprint_findings.append(f"Metadata Notice: Image was modified {int(delta // 86400)} days after creation.")
-
-
 def _calculate_ssim_grayscale(img1: Any, img2: Any) -> float:
     """Calculate Structural Similarity Index (SSIM) between two grayscale images."""
     import numpy as np

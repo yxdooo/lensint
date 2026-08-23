@@ -17,8 +17,20 @@ def _calculate_entropy(data: bytes) -> float:
     entropy = 0.0
     for count in freq.values():
         p = count / total
-        if p > 0: entropy -= p * math.log2(p)
+        if p > 0:
+            entropy -= p * math.log2(p)
     return round(entropy, 4)
+
+
+def calculate_lsb_entropy(pil_img: Image.Image) -> Dict[str, float]:
+    """Calculate Shannon entropy for LSB bitplanes across RGB channels."""
+    arr = np.array(pil_img.convert("RGB"), dtype=np.uint8)
+    entropies: Dict[str, float] = {}
+    for idx, name in enumerate(["Red", "Green", "Blue"]):
+        packed = np.packbits(arr[:, :, idx] & 1).tobytes()
+        entropies[name] = _calculate_entropy(packed)
+    return entropies
+
 
 def detect_overlay_data(raw_bytes: bytes) -> Tuple[bool, Optional[int], int, Optional[bytes]]:
     """Detect trailing overlay data appended after the valid image container boundary.
@@ -403,15 +415,12 @@ def analyze_stego(raw_bytes: bytes, pil_img: Optional[Image.Image], generate_vis
     except Exception:
         pass
 
-    if pil_img is not None:
+    # LSB and Statistical Analysis if PIL image is provided
+    if pil_img:
         try:
-            arr = np.array(pil_img.convert('RGB'), dtype=np.uint8)
-            entropies, total = {}, 0.0
-            for idx, name in enumerate(['Red', 'Green', 'Blue']):
-                packed = np.packbits((arr[:, :, idx] & 1).flatten()).tobytes()
-                ent = _calculate_entropy(packed)
-                entropies[name] = ent
-                total += ent
+            arr = np.array(pil_img)
+            entropies = calculate_lsb_entropy(pil_img)
+            total = sum(entropies.values())
             avg_ent = round(total / 3.0, 4)
             entropies['Average'] = avg_ent
             report.lsb_entropy = entropies
@@ -429,6 +438,7 @@ def analyze_stego(raw_bytes: bytes, pil_img: Optional[Image.Image], generate_vis
 
             # Chi-Square (χ²) Steganalysis
             chi_detected, chi_p = perform_chi_square_steganalysis(arr)
+            report.chi_square_detected = chi_detected
             if chi_detected:
                 report.findings.append(
                     f"Chi-Square (χ²) Steganalysis alert: PoV frequency equalization detected (Confidence: {int(chi_p * 100)}%)."

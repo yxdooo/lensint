@@ -150,6 +150,7 @@ class StegoReport:
     lsb_entropy: Dict[str, float] = field(default_factory=dict)
     lsb_stego_detected: bool = False
     lsb_stego_confidence: float = 0.0
+    chi_square_detected: bool = False
     rs_steganalysis_detected: bool = False
     rs_estimated_embedding_rate: float = 0.0
     stego_tool_signatures: List[str] = field(default_factory=list)
@@ -242,6 +243,7 @@ class ThreatIntelReport:
     ip_lookups: Dict[str, Dict[str, str]] = field(default_factory=dict)
     domain_lookups: Dict[str, Dict[str, str]] = field(default_factory=dict)
     reverse_image_engines: Dict[str, str] = field(default_factory=dict)
+    live_reputation: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

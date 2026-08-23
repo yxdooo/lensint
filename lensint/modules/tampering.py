@@ -583,11 +583,60 @@ def analyze_noise_consistency(pil_img: Image.Image) -> float:
     return 0.0
 
 
-def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True) -> Tuple[bool, float, Optional[str], List[Dict[str, Any]]]:
+# ============================================================================
+# 8. Median Filtering / Anti-Forensic Smoothing Detection
+# ============================================================================
+def analyze_median_filtering(pil_img: Image.Image) -> Tuple[bool, float]:
+    gray = np.array(pil_img.convert("L"), dtype=np.int32)
+    h, w = gray.shape
+    if h < 16 or w < 16:
+        return False, 0.0
+
+    try:
+        if HAS_CV2:
+            med = cv2.medianBlur(gray.astype(np.uint8), 3).astype(np.int32)
+        else:
+            p = np.pad(gray, 1, mode="edge")
+            wins = np.stack([
+                p[:-2, :-2], p[:-2, 1:-1], p[:-2, 2:],
+                p[1:-1, :-2], p[1:-1, 1:-1], p[1:-1, 2:],
+                p[2:, :-2], p[2:, 1:-1], p[2:, 2:]
+            ], axis=-1)
+            med = np.median(wins, axis=-1).astype(np.int32)
+
+        diff = np.abs(gray - med)
+        zero_ratio = float(np.sum(diff == 0)) / float(h * w)
+        low_res_ratio = float(np.sum(diff <= 1)) / float(h * w)
+
+        score = 0.0
+        if zero_ratio > 0.45:
+            score += (zero_ratio - 0.45) * 120.0
+        if low_res_ratio > 0.70:
+            score += (low_res_ratio - 0.70) * 100.0
+
+        score = float(np.clip(score, 0.0, 100.0))
+        return bool(score > 50.0), round(score, 2)
+    except Exception:
+        return False, 0.0
+
+
+# ============================================================================
+# 9. Splice / Local Composition Detection (Adaptive Residual Noise Field)
+# ============================================================================
+def analyze_splice_detection(
+    pil_img: Image.Image,
+    block_size: int = 32,
+    generate_visuals: bool = True,
+) -> Tuple[bool, float, Optional[str], List[Dict[str, Any]]]:
+    """
+    Detect local splicing / copy-composition artifacts by measuring localized residual noise field
+    inconsistencies using inter-quartile range (IQR) outlier boundary analysis across blocks.
+    """
     gray = np.array(pil_img.convert("L"), dtype=np.float32)
     h, w = gray.shape
-    block_size = 64
-    
+    if h < block_size or w < block_size:
+        return False, 0.0, None, []
+        
     variances = []
     var_map = []
     
@@ -600,7 +649,7 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
             else:
                 p = np.pad(blk, 1, mode="reflect")
                 lap = p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:] - 4.0 * blk
-            var = np.var(lap)
+            var = float(np.var(lap))
             row_vars.append(var)
             variances.append(var)
         var_map.append(row_vars)
@@ -608,27 +657,31 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
     if not variances:
         return False, 0.0, None, []
         
-    mean_v = np.mean(variances)
-    std_v = np.std(variances)
+    var_arr = np.array(variances, dtype=np.float64)
+    mean_v = float(np.mean(var_arr))
+    std_v = float(np.std(var_arr))
     ratio = std_v / (mean_v + 1e-6)
     
-    detected = bool(ratio > 1.2)
-    confidence = float(min(100.0, float(ratio) * 40.0))
+    q75, q25 = float(np.percentile(var_arr, 75)), float(np.percentile(var_arr, 25))
+    iqr = q75 - q25
+    outlier_threshold = q75 + 2.5 * max(iqr, 10.0)
     
     detected_boxes: List[Dict[str, Any]] = []
-    if detected and var_map:
-        threshold = mean_v + 1.8 * std_v
+    if var_map:
         for r, row in enumerate(var_map):
             for c, val in enumerate(row):
-                if val > threshold:
+                if val > outlier_threshold:
                     detected_boxes.append({
                         "x": c * block_size,
                         "y": r * block_size,
                         "w": block_size,
                         "h": block_size,
                         "type": "noise_variance_outlier",
-                        "confidence": round(min(100.0, float((val - mean_v) / (std_v + 1e-6)) * 25.0), 1),
+                        "confidence": round(min(100.0, float((val - q75) / (max(iqr, 1.0))) * 20.0), 1),
                     })
+
+    detected = bool(ratio > 1.8 and len(detected_boxes) >= 2 and std_v > 25.0)
+    confidence = float(min(100.0, float(ratio) * 30.0)) if detected else 0.0
 
     b64_img = None
     if generate_visuals and var_map:

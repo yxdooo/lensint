@@ -279,7 +279,7 @@ class C2StegoDetector:
                 return {
                     "extracted_format": "F5 Matrix Embedding Indicator",
                     "extension": ".bin",
-                    "size_bytes": f5_res.get("f5_capacity_estimate_bytes", 0),
+                    "size_bytes": f5_res.get("net_capacity_bytes", f5_res.get("raw_capacity_bytes", 0)),
                     "status": "DCT_ANOMALY_DETECTED",
                     "details": f5_res,
                 }

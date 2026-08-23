@@ -6,7 +6,7 @@
 [![STIX 2.1](https://img.shields.io/badge/STIX-2.1%20Ready-green.svg)](https://oasis-open.github.io/cti-documentation/)
 [![MISP](https://img.shields.io/badge/MISP-Event%20Ready-red.svg)](https://www.misp-project.org/)
 [![YARA](https://img.shields.io/badge/YARA-Auto%20Generator-orange.svg)](https://virustotal.github.io/yara/)
-[![Tests](https://img.shields.io/badge/tests-108%20passed-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
+[![Tests](https://img.shields.io/badge/tests-114%20passed-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
 
 LENSINT is an advanced digital image forensics and threat hunting framework built for incident response, threat intelligence, and artifact analysis. It provides multi-dimensional inspection by combining classical physical image tampering analysis with steganography decoding, anomaly detection, neural model inference, and credential scanning.
 

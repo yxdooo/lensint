@@ -390,7 +390,7 @@ class ImageAnalyzer:
                 cfa_anomaly=result.tampering.cfa_tampering_detected,
                 fft_ai_score=result.ai_detection.fft_spectral_score,
                 rs_stego_detected=result.stego.rs_steganalysis_detected,
-                chi_square_detected=result.stego.lsb_stego_detected,
+                chi_square_detected=result.stego.chi_square_detected,
                 metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
                 malware_threat=result.malware.has_threats,
                 confirmed_payload=is_confirmed_payload,

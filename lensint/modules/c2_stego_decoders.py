@@ -42,9 +42,7 @@ class C2StegoDetector:
             "idat_count": 0,
             "non_standard_chunks": [],
             "crc_tampered_chunks": [],
-            "compressed_text_tunnels": [],
-            "idat_size_anomalies": False,
-            "covert_data_extracted": [],
+            "compressed_metadata": [],
             "findings": [],
         }
 
@@ -136,16 +134,16 @@ class C2StegoDetector:
                                                 decompressed = zlib.decompress(compressed_body)
                             
                             if len(decompressed) > 10:
-                                result["compressed_text_tunnels"].append({
+                                result["compressed_metadata"].append({
                                     "keyword": keyword,
-                                    "size_decompressed": len(decompressed),
-                                    "sample": decompressed[:100].decode("latin-1", errors="ignore"),
+                                    "uncompressed_size": len(decompressed),
+                                    "chunk_type": chunk_type.decode("latin-1"),
                                 })
                                 result["findings"].append(
-                                    f"Compressed {chunk_type.decode()} metadata extracted (Keyword: '{keyword}', Size: {len(decompressed)} B)."
+                                    f"Compressed metadata found in {chunk_type.decode('latin-1')} chunk (Keyword: {keyword}, Uncompressed: {len(decompressed)} bytes)."
                                 )
                     except Exception as e:
-                        result["findings"].append(f"Parse failed: Could not decompress {chunk_type.decode()} chunk (Keyword: '{keyword}'). Error: {str(e)}")
+                        result["findings"].append(f"Failed to decompress {chunk_type.decode('latin-1')} chunk data: {e}")
 
                 pos += 12 + length
                 if chunk_type == b"IEND":

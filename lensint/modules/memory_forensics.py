@@ -271,8 +271,10 @@ class MemoryForensicsEngine:
                 combined = buffer + new_chunk
                 carved = self.carve_memory_stream(combined, max_images=max_images - len(all_carved))
                 for c in carved:
-                    absolute_offset = c["offset"] + offset_base
-                    payload_hash = hashlib.md5(c["raw_bytes"]).hexdigest()
+                    # buffer contains bytes from the END of the previous chunk.
+                    # so the current 'combined' string starts at offset_base - len(buffer)
+                    absolute_offset = c["offset"] + offset_base - len(buffer)
+                    payload_hash = hashlib.sha256(c["raw_bytes"]).hexdigest()
                     if payload_hash not in seen_payloads:
                         c["offset"] = absolute_offset
                         c["offset_hex"] = hex(absolute_offset)

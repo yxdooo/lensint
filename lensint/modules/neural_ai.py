@@ -85,7 +85,10 @@ class NeuralDeepfakePipeline:
             session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
             
             # Preprocessing from manifest specs
-            input_w, input_h = manifest.get("input_size", [224, 224])
+            input_size = manifest.get("input_size")
+            if not isinstance(input_size, list) or len(input_size) != 2 or not all(isinstance(x, int) for x in input_size):
+                raise ValueError("Manifest 'input_size' must be a list of two integers [W, H].")
+            input_w, input_h = input_size
             resized = pil_img.resize((input_w, input_h)).convert("RGB")
             arr = np.array(resized, dtype=np.float32) / 255.0
 
@@ -96,8 +99,15 @@ class NeuralDeepfakePipeline:
                 raise ValueError(f"Invalid color_space '{color_space}' in manifest. Use RGB or BGR.")
 
             # Standardize
-            mean = np.array(manifest.get("mean", [0.485, 0.456, 0.406]), dtype=np.float32)
-            std = np.array(manifest.get("std", [0.229, 0.224, 0.225]), dtype=np.float32)
+            mean_list = manifest.get("mean")
+            std_list = manifest.get("std")
+            if not isinstance(mean_list, list) or len(mean_list) != 3:
+                raise ValueError("Manifest 'mean' must be a list of three floats.")
+            if not isinstance(std_list, list) or len(std_list) != 3:
+                raise ValueError("Manifest 'std' must be a list of three floats.")
+            
+            mean = np.array(mean_list, dtype=np.float32)
+            std = np.array(std_list, dtype=np.float32)
             arr = (arr - mean) / std
 
             # Layout handling
@@ -113,6 +123,9 @@ class NeuralDeepfakePipeline:
             
             # Input shape/dtype validation against ONNX session
             model_inputs = session.get_inputs()
+            if len(model_inputs) > 1:
+                raise ValueError(f"ONNX Model requires {len(model_inputs)} inputs, but this pipeline only supplies the main image tensor.")
+                
             input_name = model_inputs[0].name
             expected_shape = model_inputs[0].shape
             
@@ -124,12 +137,28 @@ class NeuralDeepfakePipeline:
                             raise ValueError(f"ONNX Model strict shape mismatch at dim {i}. Expected {expected_shape}, but manifest/image provided {tensor.shape}")
             
             input_type = model_inputs[0].type
-            if input_type and "float" in input_type.lower():
-                tensor = tensor.astype(np.float32)
-            elif input_type and "int8" in input_type.lower():
-                tensor = tensor.astype(np.int8)
-            else:
-                tensor = tensor.astype(np.float32) # Fallback
+            if input_type:
+                type_str = input_type.lower()
+                if "float16" in type_str:
+                    tensor = tensor.astype(np.float16)
+                elif "float" in type_str:
+                    tensor = tensor.astype(np.float32)
+                elif "int8" in type_str:
+                    q_scale = manifest.get("quantization_scale")
+                    q_zero = manifest.get("quantization_zero_point")
+                    if q_scale is None or q_zero is None:
+                        raise ValueError("Manifest must provide 'quantization_scale' and 'quantization_zero_point' for int8 models.")
+                    tensor = np.clip(np.round(tensor / q_scale + q_zero), -128, 127).astype(np.int8)
+                elif "uint8" in type_str:
+                    q_scale = manifest.get("quantization_scale")
+                    q_zero = manifest.get("quantization_zero_point")
+                    if q_scale is None or q_zero is None:
+                        raise ValueError("Manifest must provide 'quantization_scale' and 'quantization_zero_point' for uint8 models.")
+                    tensor = np.clip(np.round(tensor / q_scale + q_zero), 0, 255).astype(np.uint8)
+                elif "int32" in type_str or "int64" in type_str:
+                    tensor = tensor.astype(np.int32)
+                else:
+                    raise ValueError(f"Unsupported ONNX model input type: {input_type}")
 
             outputs = session.run(None, {input_name: tensor})
             
@@ -145,7 +174,10 @@ class NeuralDeepfakePipeline:
             if len(out_arr) != expected_classes:
                 raise ValueError(f"Output schema mismatch: expected {expected_classes} classes, got {len(out_arr)}")
 
-            activation = manifest.get("output_activation", "auto").lower()
+            activation = manifest.get("output_activation", "").lower()
+            if activation not in ("softmax", "sigmoid", "none"):
+                raise ValueError("Manifest 'output_activation' must be explicitly 'softmax', 'sigmoid', or 'none'. 'auto' is not allowed.")
+                
             class_idx = manifest.get("ai_class_index", 1)
             
             if class_idx < 0 or class_idx >= expected_classes:
@@ -154,17 +186,14 @@ class NeuralDeepfakePipeline:
             if activation == "sigmoid" and expected_classes > 1:
                 raise ValueError("Sigmoid activation is currently only fully supported for single-output binary classifiers.")
 
-            if activation == "softmax" or (activation == "auto" and len(out_arr) > 1 and (np.min(out_arr) < 0 or np.max(out_arr) > 1.0)):
-                # Logits path -> apply Softmax
+            if activation == "softmax":
                 exp_vals = np.exp(out_arr - np.max(out_arr))
                 probs = exp_vals / np.sum(exp_vals)
                 prob = float(probs[class_idx])
-            elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1):
-                # Sigmoid single path
-                val = float(out_arr[0])
+            elif activation == "sigmoid":
+                val = float(out_arr[class_idx])
                 prob = 1.0 / (1.0 + math.exp(-val))
             else:
-                # Raw probabilities already activated
                 prob = max(0.0, min(1.0, float(out_arr[class_idx])))
 
             model_label = f"ONNX Neural Engine ({manifest.get('model_name', os.path.basename(model_path))})"

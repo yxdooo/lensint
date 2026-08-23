@@ -95,13 +95,19 @@ class ImageAnalyzer:
             version_str = "unknown"
             
         # Model status check
+        model_status = "no_model"
         model_manifest = os.path.expanduser("~/.lensint/models/manifest.json")
         if os.path.exists(model_manifest):
-            model_status = str(os.path.getmtime(model_manifest))
-        else:
-            model_status = "no_model"
+            try:
+                import json
+                with open(model_manifest, "r", encoding="utf-8") as f:
+                    manifest_data = json.load(f)
+                    model_status = manifest_data.get("model_sha256", str(os.path.getmtime(model_manifest)))
+            except Exception:
+                model_status = str(os.path.getmtime(model_manifest))
             
-        cache_key = f"{result.integrity.sha256}_{version_str}_ela{self.ela_quality}_len{self.min_string_len}_vis{int(self.generate_visuals)}_geo{int(self.perform_geolookup)}_{model_status}"
+        cache_schema_ver = "v2"
+        cache_key = f"{result.integrity.sha256}_{version_str}_{cache_schema_ver}_ela{self.ela_quality}_len{self.min_string_len}_vis{int(self.generate_visuals)}_geo{int(self.perform_geolookup)}_{model_status}"
 
         if self.use_cache:
             cached = get_cached(cache_key)
@@ -274,7 +280,7 @@ class ImageAnalyzer:
             findings.append(f"EXIF Thumbnail Mismatch (SSIM: {result.metadata.thumbnail_ssim_score}): Deliberate selective editing detected.")
 
         if result.stego.rs_steganalysis_detected:
-            findings.append(f"RS Steganalysis confirmed LSB replacement (Est. payload capacity: {int(result.stego.rs_estimated_embedding_rate*100)}%).")
+            findings.append(f"RS Steganalysis indicates potential LSB anomaly (Est. payload capacity: {int(result.stego.rs_estimated_embedding_rate*100)}%).")
 
         if result.malware.yara_matches:
             yara_names = ", ".join(m["rule"] for m in result.malware.yara_matches[:2])
@@ -298,8 +304,12 @@ class ImageAnalyzer:
             findings.append(f"Confidential Data Leak: {leak_count} secret(s) discovered including {first_type} ({first_red}).")
 
         try:
-            # 100% Bayesian Log-Odds Fusion (Replaces all manual score additions)
+            # Bayesian Log-Odds Fusion (Uses literature-derived Likelihood Ratios)
             from lensint.modules.benchmarks import BayesianForensicFusionEngine
+            
+            has_c2_stego = any("C2 Stego" in f for f in result.stego.findings)
+            has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
+            
             calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
                 ela_score=result.tampering.ela_max_diff,
                 copy_move_detected=result.tampering.copy_move_detected,
@@ -311,6 +321,8 @@ class ImageAnalyzer:
                 metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
                 malware_threat=result.malware.has_threats,
                 confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
+                c2_stego_detected=has_c2_stego,
+                prompt_injection=has_prompt_injection
             )
             result.overall_risk_score = calibrated_score
             result.overall_risk_level = calibrated_verdict
@@ -323,7 +335,7 @@ class ImageAnalyzer:
         except Exception:
             # Safe fallback if fusion engine is unavailable
             result.overall_risk_score = 0.0
-            result.overall_risk_level = "CLEAN"
+            result.overall_risk_level = "ANALYSIS_ERROR"
 
         if not findings:
             findings.append("No security threats, hidden payloads, or tampering indicators detected.")

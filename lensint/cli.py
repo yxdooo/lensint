@@ -201,11 +201,13 @@ def main(args_list: List[str] = None) -> int:
             os.makedirs(args.out_dir, exist_ok=True)
             console.print(f"[bold green]Saving carved images to:[/bold green] {args.out_dir}")
         
+        import uuid
         for idx, c in enumerate(carved[:10]):
             console.print(f"  [{idx+1}] Offset: {c['offset_hex']} | Format: {c['format']} | Size: {c['size_bytes']} B | Dims: {c['dimensions']} | Source: {c['source']}")
             if args.out_dir:
                 ext = c['format'].lower()
-                out_path = os.path.join(args.out_dir, f"carved_{c['offset_hex']}.{ext}")
+                uid = uuid.uuid4().hex[:8]
+                out_path = os.path.join(args.out_dir, f"carved_{c['offset_hex']}_{uid}.{ext}")
                 with open(out_path, "wb") as f:
                     f.write(c["raw_bytes"])
         
@@ -214,7 +216,8 @@ def main(args_list: List[str] = None) -> int:
             if args.out_dir:
                 for c in carved[10:]:
                     ext = c['format'].lower()
-                    out_path = os.path.join(args.out_dir, f"carved_{c['offset_hex']}.{ext}")
+                    uid = uuid.uuid4().hex[:8]
+                    out_path = os.path.join(args.out_dir, f"carved_{c['offset_hex']}_{uid}.{ext}")
                     with open(out_path, "wb") as f:
                         f.write(c["raw_bytes"])
         return 0

@@ -40,7 +40,12 @@ class DirectoryWatcher:
 
     @staticmethod
     def inspect_process_telemetry() -> List[Dict[str, str]]:
-        """Capture active process snapshot to correlate dropped image artifacts."""
+        """Capture active process snapshot.
+        
+        NOTE: This is a point-in-time polling-based snapshot (`tasklist` / `ps`).
+        It does NOT provide true kernel-level ETW, Sysmon, or inotify attribution. 
+        Short-lived writer processes may be missed.
+        """
         processes = []
         try:
             if os.name == "nt":
@@ -143,7 +148,11 @@ EDRFileDropMonitor = DirectoryWatcher
 
 
 class SandboxIngestionEngine:
-    """Ingests and correlates dynamic sandbox execution captures (CAPE / Cuckoo)."""
+    """Ingests and correlates dynamic sandbox execution captures (CAPE / Cuckoo).
+    
+    NOTE: Currently only extracts static visual artifacts (Screenshots/Drops) from the sandbox output. 
+    It does not parse raw Cuckoo telemetry JSONs (process trees, API logs).
+    """
 
     @staticmethod
     def analyze_sandbox_artifacts(sandbox_dir: str) -> Dict[str, Any]:
@@ -152,6 +161,7 @@ class SandboxIngestionEngine:
         findings = {
             "sandbox_dir": sandbox_dir,
             "screenshots_analyzed": 0,
+            "failed_ingestions": 0,
             "high_risk_captures": [],
             "extracted_credentials": [],
             "malware_signatures": [],
@@ -169,6 +179,7 @@ class SandboxIngestionEngine:
                 ext = os.path.splitext(file)[1].lower()
                 if ext in supported_exts:
                     full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, sandbox_dir)
                     try:
                         res = ImageAnalyzer(full_path, use_cache=False).analyze()
                         findings["screenshots_analyzed"] += 1
@@ -177,7 +188,7 @@ class SandboxIngestionEngine:
 
                         if res.overall_risk_level in ("HIGH", "CRITICAL"):
                             findings["high_risk_captures"].append({
-                                "file": file,
+                                "file": rel_path,
                                 "risk_score": res.overall_risk_score,
                                 "findings": res.summary_findings[:3],
                             })
@@ -185,13 +196,14 @@ class SandboxIngestionEngine:
                         # Collect OCR secret findings from sandbox screens
                         if res.ocr and res.ocr.sensitive_findings:
                             for sf in res.ocr.sensitive_findings:
-                                findings["extracted_credentials"].append(f"{file}: {sf['type']} ({sf['redacted']})")
+                                findings["extracted_credentials"].append(f"{rel_path}: {sf['type']} ({sf['redacted']})")
 
                         # Collect malware signatures
                         if res.malware and res.malware.threat_signatures:
                             findings["malware_signatures"].extend(res.malware.threat_signatures)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to ingest sandbox artifact {rel_path}: {e}")
+                        findings["failed_ingestions"] += 1
 
         if highest_score >= 70.0:
             findings["overall_sandbox_verdict"] = "MALICIOUS"

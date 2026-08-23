@@ -141,20 +141,6 @@ class DatasetBenchmarkRunner:
                 "errors": errors,
             }
 
-        # Calculate metrics at default_threshold
-        tp = sum(1 for s, lbl in scores if lbl == 1 and s >= default_threshold)
-        fp = sum(1 for s, lbl in scores if lbl == 0 and s >= default_threshold)
-        tn = sum(1 for s, lbl in scores if lbl == 0 and s < default_threshold)
-        fn = sum(1 for s, lbl in scores if lbl == 1 and s < default_threshold)
-
-        total_pos = sum(1 for _, lbl in scores if lbl == 1)
-        total_neg = sum(1 for _, lbl in scores if lbl == 0)
-
-        tpr = (tp / total_pos) if total_pos > 0 else 0.0
-        fpr = (fp / total_neg) if total_neg > 0 else 0.0
-        precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
-        accuracy = ((tp + tn) / total_samples) if total_samples > 0 else 0.0
-
         # Empirical ROC-AUC via Wilcoxon-Mann-Whitney U statistic (O(N log N))
         auc = self._calculate_auc(scores)
         
@@ -164,6 +150,28 @@ class DatasetBenchmarkRunner:
             # Recompute AUC assuming lower score = higher probability of tampering
             auc = 1.0 - auc
             score_inverted = True
+
+        # Calculate metrics at default_threshold with aware score direction
+        if score_inverted:
+            tp = sum(1 for s, lbl in scores if lbl == 1 and s <= default_threshold)
+            fp = sum(1 for s, lbl in scores if lbl == 0 and s <= default_threshold)
+            tn = sum(1 for s, lbl in scores if lbl == 0 and s > default_threshold)
+            fn = sum(1 for s, lbl in scores if lbl == 1 and s > default_threshold)
+        else:
+            tp = sum(1 for s, lbl in scores if lbl == 1 and s >= default_threshold)
+            fp = sum(1 for s, lbl in scores if lbl == 0 and s >= default_threshold)
+            tn = sum(1 for s, lbl in scores if lbl == 0 and s < default_threshold)
+            fn = sum(1 for s, lbl in scores if lbl == 1 and s < default_threshold)
+
+        total_pos = sum(1 for _, lbl in scores if lbl == 1)
+        total_neg = sum(1 for _, lbl in scores if lbl == 0)
+
+        tpr = (tp / total_pos) if total_pos > 0 else 0.0
+        fpr = (fp / total_neg) if total_neg > 0 else 0.0
+        tnr = (tn / total_neg) if total_neg > 0 else 0.0
+        precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+        accuracy = ((tp + tn) / total_samples) if total_samples > 0 else 0.0
+        balanced_accuracy = (tpr + tnr) / 2.0
             
         auc_ci_lower, auc_ci_upper = self._calculate_auc_ci(auc, total_pos, total_neg)
 
@@ -217,6 +225,7 @@ class DatasetBenchmarkRunner:
             "fpr_false_positive_rate": round(fpr, 4),
             "precision": round(precision, 4),
             "accuracy": round(accuracy, 4),
+            "balanced_accuracy": round(balanced_accuracy, 4),
             "roc_auc": round(auc, 4),
             "roc_auc_95ci": [round(auc_ci_lower, 4), round(auc_ci_upper, 4)],
             "threshold_used": default_threshold,

@@ -17,6 +17,11 @@ lensint serve [--host HOST] [--port PORT]
 | `--html` | `PATH` | Export standalone interactive HTML report |
 | `--json` | `PATH` | Export machine-readable JSON forensic findings |
 | `--stix` | `PATH` | Export standardized STIX 2.1 Threat Intelligence Bundle |
+| `--misp` | `PATH` | Export standardized MISP JSON Threat Event format |
+| `--generate-yara` | `PATH` | Generate deployable YARA detection rule (.yar) matching detected threats and hashes |
+| `--carve-memory` | `PATH` | Carve and analyze volatile image buffers from raw RAM memory dump (.raw, .dmp, .vmem) |
+| `--watch-dir` | `DIR` | Run EDR real-time monitor on target directory for newly dropped evidence files |
+| `--sandbox-dir` | `DIR` | Ingest and correlate dynamic sandbox run execution artifacts (CAPE / Cuckoo) |
 | `--extract-overlay` | `PATH` | Extract trailing binary payload appended past image EOF |
 | `--geo-lookup` | None | Reverse geocode EXIF GPS tags into physical street address |
 | `--batch` | None | Recursively process all supported images in target directory |
@@ -31,28 +36,29 @@ lensint serve [--host HOST] [--port PORT]
 
 ## Practical Examples
 
-### 1. Full Evidence Examination with HTML & JSON Export
+### 1. Full Evidence Examination with HTML, MISP & YARA Export
 ```bash
 lensint case_042_evidence.jpg \
   --case-id "CASE-2026-0042" \
   --examiner "Agent_Smith" \
   --html case_042_report.html \
   --json case_042_data.json \
+  --misp case_042_misp.json \
+  --generate-yara rule.yar \
   --geo-lookup
 ```
 
-### 2. Threat Hunting & STIX 2.1 Bundle Generation
+### 2. Memory Dump Image Carving
 ```bash
-lensint malicious_carrier.png \
-  --stix threat_intel_bundle.json \
-  --extract-overlay extracted_payload.bin
+lensint --carve-memory /dumps/infected_host_memory.raw
 ```
 
-### 3. High-Throughput Directory Batch Processing
+### 3. Dynamic Malware Sandbox (CAPE/Cuckoo) Ingestion
 ```bash
-lensint /evidence/seized_devices/folder_a/ \
-  --batch \
-  --html batch_report.html \
-  --json batch_summary.json \
-  --quiet
+lensint --sandbox-dir /opt/cuckoo/storage/analyses/1337/
+```
+
+### 4. Real-Time EDR File-Drop Directory Monitor
+```bash
+lensint --watch-dir /var/log/suricata/extracted_files/
 ```

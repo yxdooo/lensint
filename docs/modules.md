@@ -1,6 +1,6 @@
 # LENSINT Forensic & Security Modules Reference
 
-Comprehensive guide to all analytical, mathematical, and threat hunting modules in LENSINT.
+Comprehensive guide to all analytical, mathematical, threat hunting, and memory forensics modules in LENSINT v3.5.
 
 ---
 
@@ -30,22 +30,22 @@ Comprehensive guide to all analytical, mathematical, and threat hunting modules 
 2. **Splice & Noise Inconsistency Detection**: Maps block-wise high-pass Laplacian noise variance to identify foreign spliced fragments.
 3. **Copy-Move (Cloning) Detection**: Utilizes ORB keypoint descriptor clustering and Euclidean spatial thresholding to flag duplicate image regions.
 4. **JPEG Ghost Analysis**: Recompresses across $Q \in [50..95]$ to pinpoint spliced elements from images with different compression histories.
-5. **DQT Quantization Forensics**: Matches $8\times8$ quantization tables against hardware cameras and desktop editing software (Photoshop, GIMP).
+5. **DQT Quantization Forensics**: Matches $8\times8$ quantization tables against hardware cameras (iPhone 11-16 Pro, Galaxy S20-S24 Ultra, Pixel 6-9 Pro, Canon, Nikon, Sony, DJI Drones) and desktop editing software (Photoshop, Lightroom, GIMP).
 6. **CFA Bayer Demosaicing**: Detects disruptions in camera sensor color interpolation grids.
 7. **8x8 DCT Block Grid Shift**: Identifies pasted patches misaligned with the global 8x8 DCT grid phase.
 8. **Chromatic Aberration Vectors**: Analyzes radial optical convergence to detect composite objects shot on different lenses.
 9. **Median Filter Smoothing**: Detects anti-forensic post-processing used to conceal edit seams.
-10. **Illumination Angle Consistency**: Measures surface normal lighting vectors across image quadrants.
+10. **Illumination Angle Consistency**: Circular statistics ($\text{atan2}$) surface normal lighting vector evaluation across image quadrants.
 
 ---
 
-## 4. Steganography & Payload Extraction (`modules/stego.py`)
+## 4. Steganography, LSB Carver & Palet Analysis (`modules/stego.py`, `modules/stego_extract.py`)
 
-- **Trailing Overlay Detection**: Identifies and extracts data hidden past container End-of-File (EOF) markers.
+- **Trailing Overlay Detection & Carver**: Identifies and extracts data hidden past container End-of-File (EOF) markers (`--extract-overlay`).
+- **Vectorized LSB File Carver**: Fast `np.packbits` extraction carving embedded `ZIP`, `PNG`, `PDF`, `EXE`, `ELF`, and `7z` files.
+- **Palette Steganalysis**: Detects micro-variant parity modulations in indexed color tables (PNG/GIF).
+- **Stego Wordlist Dictionary Attack**: Tests carriers against standard steganography passphrases.
 - **RS (Regular/Singular) Steganalysis**: Quantifies LSB replacement by applying flipping masks and calculating sample variance variation.
-- **Tool Signature Matching**: Built-in rules for OpenStego, SilentEye, JPHide, StegHide, and F5.
-- **3-Channel LSB Shannon Entropy**: Computes Shannon entropy across R, G, B, and interleaved bitstreams ($H \in [0.0..8.0]$).
-- **Bit-Plane Slicing**: Visualizes Plane 0 (LSB) through Plane 7 (MSB).
 
 ---
 
@@ -53,12 +53,47 @@ Comprehensive guide to all analytical, mathematical, and threat hunting modules 
 
 - **Native YARA Scanning**: Detects generic PHP WebShells, Cobalt Strike stagers, Reverse Shells, and PE headers.
 - **Auto-Deobfuscator**: 1-Byte XOR brute-force scanner automatically decoding hidden C2 URLs, PowerShell loaders, and shell commands.
-- **High-Entropy Section Slicing**: Flags encrypted/compressed payloads (Entropy > 7.5).
+- **High-Entropy Section Slicing**: Flags encrypted/compressed payloads.
 - **Polyglot Containers**: Identifies `GIFAR`, `PNG-PHP`, `JPEG-PHP`, and `ZIP-Polyglots`.
 
 ---
 
-## 6. Threat Intelligence & OSINT (`modules/threat_intel.py`)
+## 6. OCR & Confidential Secret Leak Hunter (`modules/ocr_scan.py`)
 
-- Direct IOC correlation with VirusTotal, Shodan, AbuseIPDB, HybridAnalysis, and ThreatFox.
-- Reverse image search query links for Google Lens, Bing Visual Search, Yandex, and TinEye.
+- **Credential Scanner**: Extracts text from visual elements and scans for:
+  - AWS Access Keys (`AKIA...`) & Secret Access Keys
+  - GitHub Tokens (`ghp_...`, `github_pat_...`)
+  - OpenAI Secret Keys (`sk-...`)
+  - Slack API Tokens (`xoxb-...`, `xoxp-...`)
+  - Asymmetric Private Keys (`BEGIN RSA/OPENSSH PRIVATE KEY`)
+  - Cleartext Passwords (`password = "..."`)
+  - Credit Cards (Luhn validated), TC Kimlik, US SSN
+  - 12/24 word BIP39 Cryptocurrency Seed Recovery Phrases
+
+---
+
+## 7. Memory Forensics & Volatility 3 Plugin (`modules/memory_forensics.py`)
+
+- **RAM Dump Carver (`--carve-memory`)**: Stream-carves image allocations and textures from volatile memory dumps (`.raw`, `.dmp`, `.vmem`).
+- **Volatility 3 Integration (`VolatilityLensintPlugin`)**: Allows direct kernel layer and process heap scanning inside Volatility 3.
+
+---
+
+## 8. C2 Steganography & Covert Channels (`modules/c2_stego_decoders.py`)
+
+- **DCT Frequency Stego Decoders**: Detects JSteg, JPHide, F5 Matrix Embedding, OutGuess 0.2, and Hide4PGP carriers.
+- **PNG Covert Channels**: Detects CRC32 checksum covert channels, anomalous custom chunks (`coVT`, `stEG`), and `zTXt`/`iTXt` hidden compression tunnels.
+
+---
+
+## 9. Neural AI & Deepfake Detection (`modules/neural_ai.py`)
+
+- **ONNX Deepfake Inference Pipeline**: Runs neural synthetic image detection models (`TruFor`, `CNNDetection`).
+- **Diffusion Prompt Injection Hunter**: Detects jailbreak vectors (`"Ignore previous instructions"`, `"DAN Mode"`) concealed in metadata or OCR text.
+
+---
+
+## 10. Kernel-Level EDR & Sandbox Ingestion (`modules/edr_sandbox.py`)
+
+- **EDR Real-Time File Drop Monitor (`--watch-dir`)**: Watches filesystem directories in real-time and audits newly dropped evidence files instantly.
+- **CAPE / Cuckoo Sandbox Ingestion (`--sandbox-dir`)**: Ingests automated malware sandbox run captures, correlates desktop screenshots, scans for leaked credentials, and produces a consolidated threat verdict.

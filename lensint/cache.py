@@ -38,14 +38,19 @@ def get_cached(sha256: str) -> Optional[Dict[str, Any]]:
 
 def put_cache(key: str, data: Dict[str, Any]) -> None:
     """Persist analysis result dict to disk cache atomically."""
+    import uuid
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         target_path = _cache_path(key)
-        temp_path = target_path.with_suffix(".tmp")
+        temp_path = target_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
         with temp_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
         os.replace(str(temp_path), str(target_path))
     except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         pass  # cache writes are best-effort
 
 

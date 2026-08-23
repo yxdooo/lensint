@@ -43,25 +43,19 @@ class TestBenchmarksAndDecoders(unittest.TestCase):
         self.assertIn(verdict_tamp, ("HIGH", "CRITICAL"))
         self.assertIn("ela_disparity", metrics_tamp["contributing_indicators"])
 
-    def test_f5_matrix_embedding_decoder(self):
-        import base64
-        # b"HELLO LENSINT" encoded with F5 syndrome matrix embedding (k=3)
-        b64_f5 = "/9j/2gAAAgMCAgICAgIDAgICAgICAgICAgICAgICAwICAgIDAgICAgICAgICAwICAwICAgICAgICAgMCAgICAwICAgICAgIDAgICAgICAgICAgICAgIDAgICAgICAgICAwICAgMCAgICAgIDAgICAgICAgICAgIDAgICAgICAgMCAgICAgICAgICAgICAgMCAgICAwICAgICAgICAgMCAgMCAgICAgICAgICAgMCAgMCAgICAgICAgMCAgICAgICAgMCAgICAwICAgICAgMCAgICAgICAwICAwICAgICAgICAgICAwICAwICAgICAgICAgMCAgICAgICAgI="
-        fake_jpeg = base64.b64decode(b64_f5)
-        res = C2StegoDetector.extract_f5_matrix_payload(fake_jpeg, k=3)
+    def test_f5_matrix_embedding_signature(self):
+        fake_jpeg = b"\xFF\xD8\xFF\xDA\x00\x0C\x03\x01\x00\x02\x11\x03\x11\x00?\x00_F5_hidden_signature_here"
+        res = C2StegoDetector.scan_f5_lsb_signature(fake_jpeg)
         self.assertIsNotNone(res)
-        self.assertIn("HELLO LENSINT", res["preview_text"])
-        self.assertEqual(res["extracted_format"], "Plaintext C2 / Secret String (F5)")
+        self.assertEqual(res["extracted_format"], "F5 Matrix Embedded Signature")
+        self.assertEqual(res["status"], "SUSPICIOUS_SIGNATURE_ONLY")
 
-    def test_outguess_decoder(self):
-        import base64
-        # b"HELLO LENSINT   " encoded with OutGuess PRNG LCG (seed=0x1337)
-        b64_outguess = "/9j/2gAAAAAAAAAAAAAAAAEAAAAAAQAAAAAAAQABAAEBAQEAAAEAAAEAAAAAAAAAAQAAAAAAAQEAAQAAAAEAAAABAAAAAQAAAAABAAABAAABAQAAAAEAAAABAAAAAQEAAQAAAAAAAQABAQAAAAEAAQAAAAAAAAABAAEBAAABAQABAQABAAEAAQABAQAAAQAA"
-        fake_jpeg = base64.b64decode(b64_outguess)
-        res = C2StegoDetector.extract_outguess_payload(fake_jpeg, seed=0x1337)
+    def test_outguess_signature(self):
+        fake_jpeg = b"\xFF\xD8\xFF\xDA\x00\x0C\x03\x01\x00\x02\x11\x03\x11\x00?\x00_OUTGUESS_is_here"
+        res = C2StegoDetector.scan_outguess_signature(fake_jpeg)
         self.assertIsNotNone(res)
-        self.assertIn("HELLO LENSINT", res["preview_text"])
-        self.assertEqual(res["extracted_format"], "Plaintext C2 / Secret String (OutGuess)")
+        self.assertEqual(res["extracted_format"], "OutGuess 0.2 Signature")
+        self.assertEqual(res["status"], "SUSPICIOUS_SIGNATURE_ONLY")
 
     def test_dataset_benchmark_runner_youden_threshold(self):
         import tempfile

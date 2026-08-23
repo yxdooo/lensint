@@ -94,7 +94,14 @@ class ImageAnalyzer:
         except ImportError:
             version_str = "unknown"
             
-        cache_key = f"{result.integrity.sha256}_{version_str}_ela{self.ela_quality}"
+        # Model status check
+        model_manifest = os.path.expanduser("~/.lensint/models/manifest.json")
+        if os.path.exists(model_manifest):
+            model_status = str(os.path.getmtime(model_manifest))
+        else:
+            model_status = "no_model"
+            
+        cache_key = f"{result.integrity.sha256}_{version_str}_ela{self.ela_quality}_len{self.min_string_len}_vis{int(self.generate_visuals)}_geo{int(self.perform_geolookup)}_{model_status}"
 
         if self.use_cache:
             cached = get_cached(cache_key)

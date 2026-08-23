@@ -28,11 +28,14 @@ class DirectoryWatcher:
         alert_callback: Optional[Callable[[AnalysisResult], None]] = None,
         min_risk_to_alert: str = "HIGH",
     ):
+        import threading
+        from collections import OrderedDict
         self.watch_dir = watch_directory
         self.alert_callback = alert_callback
         self.min_risk = min_risk_to_alert
-        # Stores (inode, mtime, size) -> timestamp to prevent memory leak
-        self.processed_files: Dict[Tuple[int, float, int], float] = {}
+        # Stores (inode, mtime, size) -> timestamp to prevent memory leak (True LRU Cache)
+        self.processed_files: OrderedDict[Tuple[int, float, int], float] = OrderedDict()
+        self._lock = threading.Lock()
         self._running = False
 
     @staticmethod
@@ -81,9 +84,9 @@ class DirectoryWatcher:
             return results
 
         # Clean up processed_files LRU to prevent memory leak
-        if len(self.processed_files) > 10000:
-            sorted_items = sorted(self.processed_files.items(), key=lambda x: x[1])
-            self.processed_files = dict(sorted_items[2000:])
+        with self._lock:
+            while len(self.processed_files) > 10000:
+                self.processed_files.popitem(last=False)
 
         supported_exts = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
         for root, _, files in os.walk(self.watch_dir):
@@ -96,11 +99,16 @@ class DirectoryWatcher:
                         # Use a tuple of (inode, mtime, size) as a unique fingerprint
                         file_fingerprint = (stat.st_ino, stat.st_mtime, stat.st_size)
                         
-                        if file_fingerprint not in self.processed_files:
+                        with self._lock:
+                            is_processed = file_fingerprint in self.processed_files
+
+                        if not is_processed:
                             if not self._is_file_stable(full_path):
                                 continue # Wait for the file to finish writing
                                 
-                            self.processed_files[file_fingerprint] = time.time()
+                            with self._lock:
+                                self.processed_files[file_fingerprint] = time.time()
+                                self.processed_files.move_to_end(file_fingerprint)
                             
                             analyzer = ImageAnalyzer(full_path, use_cache=True)
                             res = analyzer.analyze()

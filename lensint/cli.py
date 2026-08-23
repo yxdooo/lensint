@@ -135,6 +135,11 @@ Examples:
         help="Carve and analyze volatile image buffers from raw RAM memory dump (.raw, .dmp, .vmem)",
     )
     parser.add_argument(
+        "--out-dir",
+        metavar="DIR",
+        help="Directory to save extracted artifacts (like carved memory images)",
+    )
+    parser.add_argument(
         "--watch-dir",
         metavar="DIR",
         help="Run EDR real-time monitor on target directory for newly dropped evidence files",
@@ -191,8 +196,27 @@ def main(args_list: List[str] = None) -> int:
         engine = MemoryForensicsEngine()
         carved = engine.scan_memory_dump_file(args.carve_memory)
         console.print(f"[bold green]Successfully carved {len(carved)} image buffer(s) from memory dump.[/bold green]")
+        
+        if args.out_dir:
+            os.makedirs(args.out_dir, exist_ok=True)
+            console.print(f"[bold green]Saving carved images to:[/bold green] {args.out_dir}")
+        
         for idx, c in enumerate(carved[:10]):
             console.print(f"  [{idx+1}] Offset: {c['offset_hex']} | Format: {c['format']} | Size: {c['size_bytes']} B | Dims: {c['dimensions']} | Source: {c['source']}")
+            if args.out_dir:
+                ext = c['format'].lower()
+                out_path = os.path.join(args.out_dir, f"carved_{c['offset_hex']}.{ext}")
+                with open(out_path, "wb") as f:
+                    f.write(c["raw_bytes"])
+        
+        if len(carved) > 10:
+            console.print(f"  ... and {len(carved) - 10} more.")
+            if args.out_dir:
+                for c in carved[10:]:
+                    ext = c['format'].lower()
+                    out_path = os.path.join(args.out_dir, f"carved_{c['offset_hex']}.{ext}")
+                    with open(out_path, "wb") as f:
+                        f.write(c["raw_bytes"])
         return 0
 
     # 2. Real-Time Directory Artifact Watcher

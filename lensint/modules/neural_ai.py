@@ -25,12 +25,12 @@ from PIL import Image
 logger = logging.getLogger("lensint.neural_ai")
 
 PROMPT_INJECTION_PATTERNS = [
-    (re.compile(r"ignore\s+previous\s+instructions", re.IGNORECASE), "LLM Prompt Override / Jailbreak Vector"),
-    (re.compile(r"system\s*:\s*you\s+are\s+now", re.IGNORECASE), "System Persona Hijacking Payload"),
+    (re.compile(r"\bignore\s+previous\s+instructions\b", re.IGNORECASE), "LLM Prompt Override / Jailbreak Vector"),
+    (re.compile(r"\bsystem\s*:\s*you\s+are\s+now\b", re.IGNORECASE), "System Persona Hijacking Payload"),
     (re.compile(r"\[SYSTEM(?:\s+PROMPT)?\]|\{SYSTEM_PROMPT\}", re.IGNORECASE), "System Prompt Injection Tag"),
-    (re.compile(r"do\s+anything\s+now|DAN\s+mode|unrestricted\s+mode", re.IGNORECASE), "DAN / Unrestricted Jailbreak Signature"),
-    (re.compile(r"base64\s*:\s*[A-Za-z0-9+/=]{40,}", re.IGNORECASE), "Encoded Prompt Injection Stage"),
-    (re.compile(r"format\s*:\s*markdown\s+table\s+with\s+passwords", re.IGNORECASE), "Exfiltration Instruction in Visual Metadata"),
+    (re.compile(r"\bdo\s+anything\s+now\b|\bDAN\s+mode\b|\bunrestricted\s+mode\b", re.IGNORECASE), "DAN / Unrestricted Jailbreak Signature"),
+    (re.compile(r"\bbase64\s*:\s*[A-Za-z0-9+/=]{40,}\b", re.IGNORECASE), "Encoded Prompt Injection Stage"),
+    (re.compile(r"\bformat\s*:\s*markdown\s+table\s+with\s+passwords\b", re.IGNORECASE), "Exfiltration Instruction in Visual Metadata"),
 ]
 
 
@@ -57,14 +57,17 @@ class NeuralDeepfakePipeline:
             return json.load(f)
 
     def predict_synthetic_probability(self, pil_img: Image.Image) -> Dict[str, Any]:
-        """Predict synthetic generation likelihood using ONNX model or fallback to heuristic anomaly scores."""
+        """Predict synthetic generation likelihood using ONNX model or fallback to heuristic anomaly scores.
+        
+        Note: The fallback algorithm utilizes fixed heuristical thresholds (Smoothness, Laplacian) and is 
+        NOT a calibrated probabilistic classifier.
+        """
         if pil_img is None:
             return {"heuristic_anomaly_score": 0.0, "model_used": "None", "anomalies": []}
 
         # 1. ONNX Model Inference if model file is present
         model_path = os.path.join(self.model_dir, "deepfake_detector.onnx")
         if self.onnx_available and os.path.exists(model_path):
-            # If the model is explicitly placed here, we do NOT swallow exceptions. 
             manifest = self._load_manifest()
             
             # Model Integrity Verification
@@ -86,6 +89,12 @@ class NeuralDeepfakePipeline:
             resized = pil_img.resize((input_w, input_h)).convert("RGB")
             arr = np.array(resized, dtype=np.float32) / 255.0
 
+            color_space = manifest.get("color_space", "RGB").upper()
+            if color_space == "BGR":
+                arr = arr[:, :, ::-1]
+            elif color_space != "RGB":
+                raise ValueError(f"Invalid color_space '{color_space}' in manifest. Use RGB or BGR.")
+
             # Standardize
             mean = np.array(manifest.get("mean", [0.485, 0.456, 0.406]), dtype=np.float32)
             std = np.array(manifest.get("std", [0.229, 0.224, 0.225]), dtype=np.float32)
@@ -95,6 +104,10 @@ class NeuralDeepfakePipeline:
             layout = manifest.get("tensor_layout", "NCHW").upper()
             if layout == "NCHW":
                 arr = np.transpose(arr, (2, 0, 1))  # CHW
+            elif layout == "NHWC":
+                pass # Already HWC
+            else:
+                raise ValueError(f"Invalid tensor_layout '{layout}' in manifest. Use NCHW or NHWC.")
             
             tensor = np.expand_dims(arr, axis=0)  # batch size 1
             
@@ -102,17 +115,30 @@ class NeuralDeepfakePipeline:
             model_inputs = session.get_inputs()
             input_name = model_inputs[0].name
             expected_shape = model_inputs[0].shape
+            
             if expected_shape and len(expected_shape) == 4:
                 # expected_shape might be ['batch_size', 3, 224, 224]
-                if expected_shape[1] not in (3, 'channels', 'C', -1) and isinstance(expected_shape[1], int) and expected_shape[1] != tensor.shape[1]:
-                    raise ValueError(f"ONNX Model shape mismatch. Model expects {expected_shape}, but manifest provided {tensor.shape}")
+                for i, (dim_expected, dim_actual) in enumerate(zip(expected_shape, tensor.shape)):
+                    if isinstance(dim_expected, int) and dim_expected > 0:
+                        if dim_expected != dim_actual:
+                            raise ValueError(f"ONNX Model strict shape mismatch at dim {i}. Expected {expected_shape}, but manifest/image provided {tensor.shape}")
             
-            tensor = tensor.astype(np.float32) # Standardize to FP32
+            input_type = model_inputs[0].type
+            if input_type and "float" in input_type.lower():
+                tensor = tensor.astype(np.float32)
+            elif input_type and "int8" in input_type.lower():
+                tensor = tensor.astype(np.int8)
+            else:
+                tensor = tensor.astype(np.float32) # Fallback
 
             outputs = session.run(None, {input_name: tensor})
+            
+            # Multiple output validation
+            if not outputs or len(outputs[0].shape) != 2 or outputs[0].shape[0] != 1:
+                raise ValueError(f"Output schema mismatch: expected 2D tensor [1, num_classes], got {outputs[0].shape}")
+            
             out_arr = np.array(outputs[0][0], dtype=np.float32)
             
-            # Output Schema Validation
             expected_classes = manifest.get("expected_classes")
             if not expected_classes:
                 raise ValueError("AI Manifest must specify 'expected_classes'.")
@@ -125,16 +151,20 @@ class NeuralDeepfakePipeline:
             if class_idx < 0 or class_idx >= expected_classes:
                 raise IndexError(f"Manifest ai_class_index {class_idx} is out of bounds for {expected_classes} classes.")
 
+            if activation == "sigmoid" and expected_classes > 1:
+                raise ValueError("Sigmoid activation is currently only fully supported for single-output binary classifiers.")
+
             if activation == "softmax" or (activation == "auto" and len(out_arr) > 1 and (np.min(out_arr) < 0 or np.max(out_arr) > 1.0)):
+                # Logits path -> apply Softmax
                 exp_vals = np.exp(out_arr - np.max(out_arr))
                 probs = exp_vals / np.sum(exp_vals)
                 prob = float(probs[class_idx])
             elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1):
-                if len(out_arr) != 1:
-                    raise ValueError("Sigmoid activation specified but output is not a scalar/single-element array.")
+                # Sigmoid single path
                 val = float(out_arr[0])
                 prob = 1.0 / (1.0 + math.exp(-val))
             else:
+                # Raw probabilities already activated
                 prob = max(0.0, min(1.0, float(out_arr[class_idx])))
 
             model_label = f"ONNX Neural Engine ({manifest.get('model_name', os.path.basename(model_path))})"

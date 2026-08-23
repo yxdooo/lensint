@@ -32,20 +32,13 @@ class TestC2StegoModule(unittest.TestCase):
         self.assertGreaterEqual(len(result["non_standard_chunks"]), 1)
         self.assertGreaterEqual(len(result["crc_tampered_chunks"]), 1)
 
-    def test_jsteg_payload_extraction(self):
-        # Fake JPEG scan data encoding a plaintext payload in LSBs
-        secret_text = b"SECRET_C2_COMMAND"
-        # Expand each byte into 8 bits with value (0x40 | bit)
-        scan_data = bytearray()
-        for byte_val in secret_text:
-            for shift in range(7, -1, -1):
-                bit = (byte_val >> shift) & 1
-                scan_data.append(0x40 | bit)
-
-        fake_jpeg = b"\xFF\xD8\xFF\xDA\x00\x0C\x03\x01\x00\x02\x11\x03\x11\x00?\x00" + bytes(scan_data) + b"\xFF\xD9"
-        res = C2StegoDetector.extract_jsteg_payload(fake_jpeg)
+    def test_jsteg_signature_scanning(self):
+        # Fake JPEG with JSTEG signature
+        fake_jpeg = b"\xFF\xD8\xFF\xDA\x00\x0C\x03\x01\x00\x02\x11\x03\x11\x00?\x00" + b"some_random_data_JSTEG_and_more" + b"\xFF\xD9"
+        res = C2StegoDetector.scan_jsteg_signature(fake_jpeg)
         self.assertIsNotNone(res)
-        self.assertEqual(res["status"], "CARVED_SUCCESSFULLY")
+        self.assertEqual(res["extracted_format"], "JSteg Magic Signature")
+        self.assertEqual(res["status"], "SUSPICIOUS_SIGNATURE_ONLY")
 
 
 if __name__ == "__main__":

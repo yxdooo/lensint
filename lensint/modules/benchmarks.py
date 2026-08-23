@@ -157,6 +157,14 @@ class DatasetBenchmarkRunner:
 
         # Empirical ROC-AUC via Wilcoxon-Mann-Whitney U statistic (O(N log N))
         auc = self._calculate_auc(scores)
+        
+        # Detector Score Direction Detection
+        score_inverted = False
+        if auc < 0.5:
+            # Recompute AUC assuming lower score = higher probability of tampering
+            auc = 1.0 - auc
+            score_inverted = True
+            
         auc_ci_lower, auc_ci_upper = self._calculate_auc_ci(auc, total_pos, total_neg)
 
         # Dynamic Optimal Threshold Search via Youden's J Statistic with STRATIFIED Train/Test Split
@@ -169,20 +177,28 @@ class DatasetBenchmarkRunner:
         train_scores = pos_scores[:int(len(pos_scores)*0.5)] + neg_scores[:int(len(neg_scores)*0.5)]
         test_scores = pos_scores[int(len(pos_scores)*0.5):] + neg_scores[int(len(neg_scores)*0.5):]
         
+        unbiased_j = 0.0
         if len(set(lbl for _, lbl in train_scores)) < 2 or len(set(lbl for _, lbl in test_scores)) < 2:
-            train_scores = scores
-            test_scores = scores
+            # Fallback for extremely small datasets: calculate threshold on all, but do not claim unbiased J
+            train_pos = sum(1 for _, lbl in scores if lbl == 1)
+            train_neg = sum(1 for _, lbl in scores if lbl == 0)
+            optimal_th, _ = self._find_optimal_youden_threshold(scores, train_pos, train_neg, invert=score_inverted)
+            unbiased_j = 0.0 # Cannot provide unbiased estimate
+        else:
+            train_pos = sum(1 for _, lbl in train_scores if lbl == 1)
+            train_neg = sum(1 for _, lbl in train_scores if lbl == 0)
+            optimal_th, _ = self._find_optimal_youden_threshold(train_scores, train_pos, train_neg, invert=score_inverted)
             
-        train_pos = sum(1 for _, lbl in train_scores if lbl == 1)
-        train_neg = sum(1 for _, lbl in train_scores if lbl == 0)
-        optimal_th, _ = self._find_optimal_youden_threshold(train_scores, train_pos, train_neg)
-        
-        # Test unbiased max_j on test set
-        test_pos = sum(1 for _, lbl in test_scores if lbl == 1)
-        test_neg = sum(1 for _, lbl in test_scores if lbl == 0)
-        test_tp = sum(1 for s, lbl in test_scores if lbl == 1 and s >= optimal_th)
-        test_fp = sum(1 for s, lbl in test_scores if lbl == 0 and s >= optimal_th)
-        unbiased_j = (test_tp / test_pos if test_pos > 0 else 0.0) - (test_fp / test_neg if test_neg > 0 else 0.0)
+            # Test unbiased max_j on test set
+            test_pos = sum(1 for _, lbl in test_scores if lbl == 1)
+            test_neg = sum(1 for _, lbl in test_scores if lbl == 0)
+            if score_inverted:
+                test_tp = sum(1 for s, lbl in test_scores if lbl == 1 and s <= optimal_th)
+                test_fp = sum(1 for s, lbl in test_scores if lbl == 0 and s <= optimal_th)
+            else:
+                test_tp = sum(1 for s, lbl in test_scores if lbl == 1 and s >= optimal_th)
+                test_fp = sum(1 for s, lbl in test_scores if lbl == 0 and s >= optimal_th)
+            unbiased_j = (test_tp / test_pos if test_pos > 0 else 0.0) - (test_fp / test_neg if test_neg > 0 else 0.0)
 
         # Class balance warning
         class_balance_warning = total_pos < (total_neg * 0.1) or total_neg < (total_pos * 0.1)
@@ -192,6 +208,7 @@ class DatasetBenchmarkRunner:
             "total_failed": total_errors,
             "error_rate": round(error_rate, 4),
             "class_imbalance": class_balance_warning,
+            "score_inverted": score_inverted,
             "true_positives": tp,
             "false_positives": fp,
             "true_negatives": tn,
@@ -204,7 +221,7 @@ class DatasetBenchmarkRunner:
             "roc_auc_95ci": [round(auc_ci_lower, 4), round(auc_ci_upper, 4)],
             "threshold_used": default_threshold,
             "optimal_youden_threshold": round(optimal_th, 2),
-            "unbiased_youden_j_index": round(unbiased_j, 4),
+            "unbiased_youden_j_index": round(unbiased_j, 4) if unbiased_j != 0.0 else None,
             "sample_errors": errors[:5],
             "ci_disclaimer": "Hanley-McNeil CI used. May not be robust for highly imbalanced or N < 50 datasets.",
         }
@@ -214,6 +231,7 @@ class DatasetBenchmarkRunner:
         scores_with_labels: List[Tuple[float, int]],
         total_pos: int,
         total_neg: int,
+        invert: bool = False
     ) -> Tuple[float, float]:
         """Find optimal cutoff threshold that maximizes Youden's J statistic (J = TPR - FPR)."""
         if total_pos == 0 or total_neg == 0:
@@ -233,8 +251,13 @@ class DatasetBenchmarkRunner:
         best_j = -1.0
 
         for candidate_th in candidate_thresholds:
-            tp = sum(1 for s, lbl in scores_with_labels if lbl == 1 and s >= candidate_th)
-            fp = sum(1 for s, lbl in scores_with_labels if lbl == 0 and s >= candidate_th)
+            if invert:
+                tp = sum(1 for s, lbl in scores_with_labels if lbl == 1 and s <= candidate_th)
+                fp = sum(1 for s, lbl in scores_with_labels if lbl == 0 and s <= candidate_th)
+            else:
+                tp = sum(1 for s, lbl in scores_with_labels if lbl == 1 and s >= candidate_th)
+                fp = sum(1 for s, lbl in scores_with_labels if lbl == 0 and s >= candidate_th)
+                
             cur_tpr = tp / total_pos
             cur_fpr = fp / total_neg
             j = cur_tpr - cur_fpr
@@ -309,6 +332,8 @@ class BayesianForensicFusionEngine:
         metadata_anomaly: bool,
         malware_threat: bool,
         confirmed_payload: bool = False,
+        c2_stego_detected: bool = False,
+        prompt_injection: bool = False,
         prior_probability: float = 0.20,
     ) -> Tuple[float, str, Dict[str, Any]]:
         """Calculate posterior risk with correlation attenuation and context priors."""
@@ -361,13 +386,23 @@ class BayesianForensicFusionEngine:
             bm = LITERATURE_BASELINE_BENCHMARKS["stego_rs_chisquare"]
             lr = bm["tpr_sensitivity"] / max(0.005, bm["fpr_false_positive_rate"])
             add_evidence("steganalysis", lr, "steganography_lsb")
+            
+        # 7. Advanced C2 Stego (JSteg, F5, OutGuess Signatures)
+        if c2_stego_detected:
+            lr = 0.85 / 0.05
+            add_evidence("c2_stego_signature", lr, "steganography_lsb")
 
-        # 7. Metadata Chronology Anomaly
+        # 8. Metadata Chronology Anomaly
         if metadata_anomaly:
             lr = 0.90 / 0.05
             add_evidence("metadata_chronology", lr, "metadata")
+            
+        # 9. Deepfake Prompt Injection Vector
+        if prompt_injection:
+            lr = 0.95 / 0.02
+            add_evidence("prompt_injection", lr, "threat_vector")
 
-        # 8. Malware: Differentiate confirmed executable payload vs signature match
+        # 10. Malware: Differentiate confirmed executable payload vs signature match
         if confirmed_payload:
             # Verified executable header, unpacked shellcode, or active webshell syntax
             log_odds += 6.5

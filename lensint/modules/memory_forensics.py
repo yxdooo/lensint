@@ -94,21 +94,52 @@ class MemoryForensicsEngine:
                     pass
             png_pos += 8
 
-        # 2. Carve JPEGs structurally
+        # 2. Carve JPEGs structurally (Marker Jumping)
         jpg_pos = 0
         while len(carved_results) < max_images:
             jpg_pos = raw_memory.find(b"\xFF\xD8\xFF", jpg_pos)
             if jpg_pos == -1:
                 break
             
-            # Since JPEG entropy parsing is highly complex and error-prone in raw python,
-            # we scan for EOI marker and validate via Pillow.
-            eoi_pos = raw_memory.find(b"\xFF\xD9", jpg_pos)
-            if eoi_pos != -1 and (eoi_pos - jpg_pos) < self.max_carve_size:
-                img_data = raw_memory[jpg_pos : eoi_pos + 2]
+            cur = jpg_pos + 2
+            valid = True
+            found_eoi = False
+            
+            while cur < total_len - 1 and cur - jpg_pos < self.max_carve_size:
+                if raw_memory[cur] != 0xFF:
+                    cur += 1
+                    continue
+                    
+                marker = raw_memory[cur + 1]
+                if marker == 0xD9: # EOI
+                    cur += 2
+                    found_eoi = True
+                    break
+                elif marker == 0x00 or (0xD0 <= marker <= 0xD7):
+                    # Escaped FF or restart marker
+                    cur += 2
+                elif marker == 0xDA: # SOS
+                    # SOS length
+                    if cur + 4 > total_len:
+                        break
+                    length = int.from_bytes(raw_memory[cur+2:cur+4], "big")
+                    cur += 2 + length
+                    # After SOS header, skip entropy data until next marker
+                    while cur < total_len - 1 and (cur - jpg_pos) < self.max_carve_size:
+                        if raw_memory[cur] == 0xFF and raw_memory[cur+1] != 0x00 and not (0xD0 <= raw_memory[cur+1] <= 0xD7):
+                            break
+                        cur += 1
+                else:
+                    # Generic segment with length
+                    if cur + 4 > total_len:
+                        break
+                    length = int.from_bytes(raw_memory[cur+2:cur+4], "big")
+                    cur += 2 + length
+
+            if found_eoi and cur <= total_len:
+                img_data = raw_memory[jpg_pos : cur]
                 try:
                     with Image.open(io.BytesIO(img_data)) as test_img:
-                        # Verify Pillow actually decoded it by calling load()
                         test_img.load()
                         w, h = test_img.size
                         if w >= 8 and h >= 8:
@@ -125,7 +156,67 @@ class MemoryForensicsEngine:
                     pass
             jpg_pos += 4
 
-        # 3. Carve BMP (BITMAPFILEHEADER structure)
+        # 3. Carve WEBP structurally (RIFF + size + WEBP)
+        webp_pos = 0
+        while len(carved_results) < max_images:
+            webp_pos = raw_memory.find(b"RIFF", webp_pos)
+            if webp_pos == -1 or webp_pos + 12 > total_len:
+                break
+            
+            if raw_memory[webp_pos + 8 : webp_pos + 12] == b"WEBP":
+                declared_size = int.from_bytes(raw_memory[webp_pos + 4 : webp_pos + 8], "little")
+                total_size = declared_size + 8
+                if 16 <= total_size <= self.max_carve_size and webp_pos + total_size <= total_len:
+                    img_data = raw_memory[webp_pos : webp_pos + total_size]
+                    try:
+                        with Image.open(io.BytesIO(img_data)) as test_img:
+                            w, h = test_img.size
+                            if w >= 8 and h >= 8:
+                                carved_results.append({
+                                    "format": "WEBP",
+                                    "offset": webp_pos,
+                                    "offset_hex": hex(webp_pos),
+                                    "size_bytes": len(img_data),
+                                    "dimensions": (w, h),
+                                    "raw_bytes": img_data,
+                                    "source": "Memory Carved Chunk",
+                                })
+                    except Exception:
+                        pass
+            webp_pos += 4
+
+        # 4. Carve GIF structurally (GIF87a / GIF89a -> ... -> \x3B)
+        for magic in (b"GIF87a", b"GIF89a"):
+            gif_pos = 0
+            while len(carved_results) < max_images:
+                gif_pos = raw_memory.find(magic, gif_pos)
+                if gif_pos == -1:
+                    break
+                
+                trailer_pos = raw_memory.find(b"\x3B", gif_pos + 6)
+                while trailer_pos != -1 and (trailer_pos - gif_pos) < self.max_carve_size:
+                    img_data = raw_memory[gif_pos : trailer_pos + 1]
+                    try:
+                        with Image.open(io.BytesIO(img_data)) as test_img:
+                            w, h = test_img.size
+                            if w >= 8 and h >= 8:
+                                carved_results.append({
+                                    "format": "GIF",
+                                    "offset": gif_pos,
+                                    "offset_hex": hex(gif_pos),
+                                    "size_bytes": len(img_data),
+                                    "dimensions": (w, h),
+                                    "raw_bytes": img_data,
+                                    "source": "Memory Carved Chunk",
+                                })
+                                break # Move to next GIF magic match
+                    except Exception:
+                        pass
+                    # If this 3B didn't work, maybe the real trailer is later
+                    trailer_pos = raw_memory.find(b"\x3B", trailer_pos + 1)
+                gif_pos += 6
+
+        # 5. Carve BMP (BITMAPFILEHEADER structure)
         bmp_pos = 0
         while len(carved_results) < max_images:
             bmp_pos = raw_memory.find(b"BM", bmp_pos)
@@ -164,8 +255,10 @@ class MemoryForensicsEngine:
         if not os.path.exists(dump_path):
             raise FileNotFoundError(f"Memory dump file not found: {dump_path}")
 
+        import hashlib
         all_carved = []
-        seen_offsets = set()
+        seen_payloads = set()
+        
         with open(dump_path, "rb") as f:
             overlap = 1024 * 1024  # 1MB overlap between chunks
             buffer = b""
@@ -179,11 +272,12 @@ class MemoryForensicsEngine:
                 carved = self.carve_memory_stream(combined, max_images=max_images - len(all_carved))
                 for c in carved:
                     absolute_offset = c["offset"] + offset_base
-                    if absolute_offset not in seen_offsets:
+                    payload_hash = hashlib.md5(c["raw_bytes"]).hexdigest()
+                    if payload_hash not in seen_payloads:
                         c["offset"] = absolute_offset
                         c["offset_hex"] = hex(absolute_offset)
                         all_carved.append(c)
-                        seen_offsets.add(absolute_offset)
+                        seen_payloads.add(payload_hash)
                 
                 buffer = combined[-overlap:] if len(combined) > overlap else combined
                 offset_base += len(new_chunk)

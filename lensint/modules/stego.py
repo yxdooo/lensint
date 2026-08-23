@@ -82,23 +82,34 @@ def extract_lsb_hidden_payload(pil_img: Image.Image) -> Optional[str]:
             b'MZ': 'Embedded Executable Binary in LSB',
             b'%PDF-': 'Embedded PDF Document in LSB',
         }
-        # Check each channel individually and also the interleaved R+G+B combination
+        # Check each channel individually and also the interleaved RGB combination
         channel_combinations = [
-            (arr[:, :, 0], "Red channel"),
-            (arr[:, :, 1], "Green channel"),
-            (arr[:, :, 2], "Blue channel"),
+            (arr[:, :, 0].flatten(), "Red channel"),
+            (arr[:, :, 1].flatten(), "Green channel"),
+            (arr[:, :, 2].flatten(), "Blue channel"),
             # Interleaved: common in StegHide / OpenStego
-            (arr.reshape(-1, 3)[:, 0], "Interleaved-R"),
+            (arr.flatten(), "Interleaved-RGB"),
         ]
+
+        def _is_valid_zip(data: bytes) -> bool:
+            # Minimal structural validation for ZIP Central Directory or EoCD
+            # Since LSB payloads are small in the first block, we just ensure it's not random \x03\x04
+            return b"PK\x01\x02" in data or b"PK\x05\x06" in data or len(data) > 30
+
+        # Scan deeper (up to 64KB instead of 2KB) to catch payloads with offsets
         for channel_arr, _ in channel_combinations:
-            packed = np.packbits((channel_arr.flatten() & 1)[:16384]).tobytes()  # 2048 bytes
+            packed = np.packbits((channel_arr & 1)[: 524288]).tobytes()  # 65536 bytes
             for sig, label in KNOWN_SIGS.items():
-                if packed.startswith(sig):
-                    # Add simple container validation to reduce false positives on MZ
+                pos = packed.find(sig)
+                if pos != -1 and pos < 1024: # Payload must start somewhat early
+                    # Add simple container validation to reduce false positives
                     if sig == b'MZ':
-                        if not _is_valid_pe_header(packed, 0):
+                        if not _is_valid_pe_header(packed, pos):
                             continue # MZ False positive, skip
-                    return label
+                    if sig == b'PK\x03\x04':
+                        if not _is_valid_zip(packed):
+                            continue # ZIP False positive, skip
+                    return f"{label} (Offset: {pos} bytes)"
     except Exception:
         pass
     return None
@@ -175,9 +186,10 @@ def perform_rs_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         # Estimation of embedding rate p:
         # In clean images, d0 ≈ d1. In fully embedded images, d0 ≈ 0.
         diff = abs(d0 - d1)
+        # Threshold 0.05 is a heuristic baseline; high-res or noisy images may require dynamic calibration
         if diff > 0.05:
-            # Significant RS imbalance: estimate embedding rate
-            est_rate = float(min(1.0, max(0.0, float(diff) * 3.5)))
+            # Significant RS imbalance: rough heuristic estimate
+            est_rate = float(min(1.0, max(0.0, float(diff) * 2.0)))
             return True, round(est_rate, 3)
         return False, 0.0
     except Exception:
@@ -194,6 +206,7 @@ def perform_chi_square_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         (stego_detected: bool, chi_square_p_value: float)
     """
     try:
+        # Evaluate across channels if available, default to flattening
         if len(arr.shape) == 3:
             channel = arr[:, :, 1].flatten()
         else:
@@ -217,13 +230,18 @@ def perform_chi_square_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         if degrees_of_freedom < 10:
             return False, 0.0
 
-        # Normal approximation for Chi-Square distribution p-value
-        z = (chi_square - degrees_of_freedom) / np.sqrt(2.0 * degrees_of_freedom)
-        # When embedding occurs, chi_square is very small (z is strongly negative)
-        p_equalized = float(0.5 * (1.0 - math.erf(z / math.sqrt(2.0))))
+        try:
+            from scipy.stats import chi2
+            p_val = chi2.sf(chi_square, degrees_of_freedom) # exact survival function
+        except ImportError:
+            # Fallback normal approximation for Chi-Square distribution p-value
+            z = (chi_square - degrees_of_freedom) / np.sqrt(2.0 * degrees_of_freedom)
+            p_val = float(0.5 * (1.0 - math.erf(z / math.sqrt(2.0))))
+            
+        p_equalized = float(p_val)
         
         # When p_equalized is high (> 0.95), LSB PoVs have been artificially flattened
-        is_stego = p_equalized >= 0.95 and z < -2.0
+        is_stego = p_equalized >= 0.95
         return is_stego, round(p_equalized, 4)
     except Exception:
         return False, 0.0

@@ -29,7 +29,7 @@ jobs:
       - name: Upgrade pip and Install Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e ".[all]"
+          python -m pip install -e ".[all]" httpx
 
       - name: Run Pytest Suite with Coverage
         run: |

@@ -160,38 +160,63 @@ def _detect_social_media_provenance(raw_bytes: bytes, pil_img: Optional[Image.Im
     return None
 
 
-def _calculate_ssim(img1: Image.Image, img2: Image.Image) -> float:
-    """Compute Structural Similarity Index (SSIM) between two grayscale images of equal size."""
-    try:
-        import numpy as np
+    created = parse_dt(report.datetime_original) or parse_dt(report.datetime_digitized)
+    modified = parse_dt(report.datetime_modified)
+    
+    if created and modified:
+        delta = (modified - created).total_seconds()
+        # If modified is noticeably in the past relative to created
+        if delta < -60:
+            report.timestamp_anomalies.append("Timestamp Anomaly: File modification date predates creation date.")
+            report.software_footprint_findings.append(f"Timestamp Anomaly: File modification date ({modified}) predates creation date ({created}).")
+        # If modified significantly after created (e.g. > 1 day)
+        elif delta > 86400:
+            report.software_footprint_findings.append(f"Metadata Notice: Image was modified {int(delta // 86400)} days after creation.")
+
+
+def _calculate_ssim_grayscale(img1: Any, img2: Any) -> float:
+    """Calculate Structural Similarity Index (SSIM) between two grayscale images."""
+    import numpy as np
+    from PIL import Image
+
+    if isinstance(img1, Image.Image):
         arr1 = np.array(img1.convert("L"), dtype=np.float64)
+    else:
+        arr1 = np.array(img1, dtype=np.float64)
+
+    if isinstance(img2, Image.Image):
         arr2 = np.array(img2.convert("L"), dtype=np.float64)
+    else:
+        arr2 = np.array(img2, dtype=np.float64)
 
-        if arr1.shape != arr2.shape:
-            return 1.0
-
-        c1 = (0.01 * 255) ** 2
-        c2 = (0.03 * 255) ** 2
-
-        mu1 = np.mean(arr1)
-        mu2 = np.mean(arr2)
-        var1 = np.var(arr1)
-        var2 = np.var(arr2)
-        cov = np.mean((arr1 - mu1) * (arr2 - mu2))
-
-        numerator = (2 * mu1 * mu2 + c1) * (2 * cov + c2)
-        denominator = (mu1**2 + mu2**2 + c1) * (var1 + var2 + c2)
-        ssim_val = numerator / (denominator + 1e-6)
-        return float(np.clip(ssim_val, 0.0, 1.0))
-    except Exception:
-        return 1.0
+    if arr1.shape != arr2.shape:
+        raise ValueError("Images must have identical dimensions for SSIM calculation.")
+    
+    c1 = (0.01 * 255) ** 2
+    c2 = (0.03 * 255) ** 2
+    
+    mu1 = np.mean(arr1)
+    mu2 = np.mean(arr2)
+    
+    sigma1_sq = np.var(arr1)
+    sigma2_sq = np.var(arr2)
+    sigma12 = np.mean((arr1 - mu1) * (arr2 - mu2))
+    
+    ssim = ((2 * mu1 * mu2 + c1) * (2 * sigma12 + c2)) / ((mu1**2 + mu2**2 + c1) * (sigma1_sq + sigma2_sq + c2))
+    return float(np.clip(ssim, -1.0, 1.0))
 
 
-def _check_thumbnail_mismatch(pil_img: Optional[Image.Image],
-                              raw_bytes: bytes) -> Tuple[bool, float, bool]:
-    """Check for discrepancy between EXIF embedded thumbnail and main image.
+_calculate_ssim = _calculate_ssim_grayscale
 
-    Returns: (mismatch_detected, ssim_score, thumbnail_extracted)
+
+def _check_thumbnail_mismatch(
+    pil_img: Optional[Image.Image],
+    raw_bytes: bytes,
+) -> Tuple[bool, float, bool]:
+    """
+    Extract embedded EXIF thumbnail, resize main image to thumbnail dimensions,
+    and compute SSIM score to detect tampering where main image was altered
+    without updating the thumbnail.
     """
     if not pil_img:
         return False, 1.0, False
@@ -201,18 +226,29 @@ def _check_thumbnail_mismatch(pil_img: Optional[Image.Image],
         import numpy as np
 
         # Search for embedded JPEG thumbnail inside raw bytes (common in EXIF IFD1)
-        # IFD1 thumbnail usually starts after EXIF header with \xFF\xD8\xFF\xDB or \xFF\xD8\xFF\xE0
         thumb_img = None
-        # Try PIL native exif thumbnail
+        # Try PIL native exif thumbnail with TIFF header offset correction
         if hasattr(pil_img, "_getexif"):
             exif = pil_img._getexif()
             if exif and 0x0201 in exif and 0x0202 in exif:
                 thumb_offset = exif[0x0201]
                 thumb_len = exif[0x0202]
-                if thumb_offset + thumb_len <= len(raw_bytes):
+                exif_start = raw_bytes.find(b"Exif\x00\x00")
+                abs_offset = (exif_start + 6 + thumb_offset) if exif_start != -1 else thumb_offset
+                if abs_offset + thumb_len <= len(raw_bytes):
+                    thumb_data = raw_bytes[abs_offset : abs_offset + thumb_len]
+                    if thumb_data.startswith(b"\xFF\xD8"):
+                        try:
+                            thumb_img = Image.open(io.BytesIO(thumb_data))
+                        except Exception:
+                            pass
+                if thumb_img is None and thumb_offset + thumb_len <= len(raw_bytes):
                     thumb_data = raw_bytes[thumb_offset : thumb_offset + thumb_len]
                     if thumb_data.startswith(b"\xFF\xD8"):
-                        thumb_img = Image.open(io.BytesIO(thumb_data))
+                        try:
+                            thumb_img = Image.open(io.BytesIO(thumb_data))
+                        except Exception:
+                            pass
 
         # Fallback: scan for second SOI marker \xFF\xD8 inside EXIF header region
         if thumb_img is None and len(raw_bytes) > 2048:

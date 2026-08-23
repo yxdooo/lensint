@@ -231,6 +231,18 @@ class NeuralDeepfakePipeline:
         arr = np.array(pil_img.convert("RGB"), dtype=np.float32)
         h, w, _ = arr.shape
 
+        if float(np.std(arr[:, :, 1])) < 2.0:
+            return {
+                "heuristic_anomaly_score": 0.0,
+                "model_used": "Spatial Gradient Curvature Heuristic (Local Algorithm)",
+                "anomalies": [],
+                "features": {
+                    "smoothness_ratio": 1.0,
+                    "residual_noise_variance": 0.0,
+                    "chrominance_correlation": 0.0,
+                },
+            }
+
         # Feature A: Spatial Gradient Curvature
         gy, gx = np.gradient(arr[:, :, 1])
         grad_norm = np.sqrt(gx**2 + gy**2)
@@ -252,25 +264,26 @@ class NeuralDeepfakePipeline:
             residual_variance = 50.0
 
         # Feature C: Inter-Channel Chrominance Correlation (r_RG)
+        is_monochrome = (pil_img.mode in ("L", "1")) or float(np.std(arr[:, :, 0] - arr[:, :, 1])) < 1.0
         r_flat = arr[:, :, 0].flatten()
         g_flat = arr[:, :, 1].flatten()
         std_r, std_g = np.std(r_flat), np.std(g_flat)
-        if std_r > 1e-3 and std_g > 1e-3:
+        if not is_monochrome and std_r > 1e-3 and std_g > 1e-3:
             corr_rg = float(np.corrcoef(r_flat, g_flat)[0, 1])
         else:
-            corr_rg = 0.95
+            corr_rg = 0.85
 
         # Academic heuristic anomaly index computation
         heuristic_anomaly_score = 0.0
-        if smoothness_ratio < 1.65:
-            heuristic_anomaly_score += (1.65 - smoothness_ratio) * 45.0
+        if smoothness_ratio < 1.50:
+            heuristic_anomaly_score += (1.50 - smoothness_ratio) * 40.0
             anomalies.append("Synthetic gradient smoothness anomaly (Diffusion characteristic)")
 
-        if residual_variance < 15.0:
-            heuristic_anomaly_score += (15.0 - residual_variance) * 2.5
+        if residual_variance < 8.0:
+            heuristic_anomaly_score += (8.0 - residual_variance) * 2.5
             anomalies.append("Unnaturally low high-frequency noise floor (Synthetic neural generator)")
 
-        if corr_rg > 0.985:
+        if not is_monochrome and corr_rg > 0.990:
             heuristic_anomaly_score += 15.0
             anomalies.append("Excessive inter-channel chrominance alignment")
 

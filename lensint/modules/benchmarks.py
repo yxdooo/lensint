@@ -351,70 +351,61 @@ class BayesianForensicFusionEngine:
         indicator_weights = {}
         seen_correlation_groups: Dict[str, int] = {}
 
-        def add_evidence(name: str, lr: float, group: str):
+        def add_evidence(name: str, is_active: bool, tpr: float, fpr: float, group: str):
             nonlocal log_odds
             count = seen_correlation_groups.get(group, 0)
-            # Correlation attenuation factor: discounts subsequent correlated indicators
             attenuation = 1.0 / (1.0 + 1.5 * count)
-            delta_log_odds = math.log(lr) * attenuation
+            if is_active:
+                lr = tpr / max(0.005, fpr)
+                delta_log_odds = math.log(lr) * attenuation
+            else:
+                # Negative likelihood ratio (1-TPR)/(1-FPR) with conservative damping
+                lr_minus = max(0.05, 1.0 - tpr) / max(0.05, 1.0 - fpr)
+                delta_log_odds = math.log(lr_minus) * attenuation * 0.25
             log_odds += delta_log_odds
             indicator_weights[name] = round(delta_log_odds, 3)
-            seen_correlation_groups[group] = count + 1
+            if is_active:
+                seen_correlation_groups[group] = count + 1
 
         # 1. ELA Disparity Indicator
-        if ela_score >= 65.0:
-            bm = LITERATURE_BASELINE_BENCHMARKS["tampering_ela"]
-            lr = bm["tpr_sensitivity"] / max(0.005, bm["fpr_false_positive_rate"])
-            add_evidence("ela_disparity", lr, "jpeg_compression_artifacts")
+        bm_ela = LITERATURE_BASELINE_BENCHMARKS["tampering_ela"]
+        add_evidence("ela_disparity", ela_score >= 65.0, bm_ela["tpr_sensitivity"], bm_ela["fpr_false_positive_rate"], "jpeg_compression_artifacts")
 
         # 2. Copy-Move Cloning
-        if copy_move_detected:
-            bm = LITERATURE_BASELINE_BENCHMARKS["copy_move_cloning"]
-            lr = bm["tpr_sensitivity"] / max(0.005, bm["fpr_false_positive_rate"])
-            add_evidence("copy_move_cloning", lr, "spatial_cloning")
+        bm_cm = LITERATURE_BASELINE_BENCHMARKS["copy_move_cloning"]
+        add_evidence("copy_move_cloning", copy_move_detected, bm_cm["tpr_sensitivity"], bm_cm["fpr_false_positive_rate"], "spatial_cloning")
 
         # 3. DQT Quantization Anomaly (Correlated with ELA)
-        if dqt_anomaly:
-            bm = LITERATURE_BASELINE_BENCHMARKS["dqt_quantization"]
-            lr = bm["tpr_sensitivity"] / max(0.005, bm["fpr_false_positive_rate"])
-            add_evidence("dqt_quantization", lr, "jpeg_compression_artifacts")
+        bm_dqt = LITERATURE_BASELINE_BENCHMARKS["dqt_quantization"]
+        add_evidence("dqt_quantization", dqt_anomaly, bm_dqt["tpr_sensitivity"], bm_dqt["fpr_false_positive_rate"], "jpeg_compression_artifacts")
 
         # 4. CFA Bayer Demosaicing Inconsistency
-        if cfa_anomaly:
-            lr = 0.88 / 0.045
-            add_evidence("cfa_demosaicing", lr, "sensor_artifacts")
+        add_evidence("cfa_demosaicing", cfa_anomaly, 0.88, 0.045, "sensor_artifacts")
 
         # 5. AI FFT Spectral Periodicity
-        if fft_ai_score >= 50.0:
-            bm = LITERATURE_BASELINE_BENCHMARKS["ai_fft_spectral"]
-            lr = bm["tpr_sensitivity"] / max(0.005, bm["fpr_false_positive_rate"])
-            add_evidence("fft_spectral", lr, "synthetic_frequency")
+        bm_fft = LITERATURE_BASELINE_BENCHMARKS["ai_fft_spectral"]
+        add_evidence("fft_spectral", fft_ai_score >= 50.0, bm_fft["tpr_sensitivity"], bm_fft["fpr_false_positive_rate"], "synthetic_frequency")
 
         # 6. Steganalysis (RS / Chi-Square)
-        if rs_stego_detected or chi_square_detected:
-            bm = LITERATURE_BASELINE_BENCHMARKS["stego_rs_chisquare"]
-            lr = bm["tpr_sensitivity"] / max(0.005, bm["fpr_false_positive_rate"])
-            add_evidence("steganalysis", lr, "steganography_lsb")
+        bm_stego = LITERATURE_BASELINE_BENCHMARKS["stego_rs_chisquare"]
+        add_evidence("steganalysis", rs_stego_detected or chi_square_detected, bm_stego["tpr_sensitivity"], bm_stego["fpr_false_positive_rate"], "steganography_lsb")
             
         # 7. Advanced C2 Stego (JSteg, F5, OutGuess Signatures)
         if c2_stego_detected:
-            lr = 0.85 / 0.05
-            add_evidence("c2_stego_signature", lr, "steganography_lsb")
+            add_evidence("c2_stego_signature", True, 0.85, 0.05, "steganography_lsb")
 
         # 8. Metadata Chronology Anomaly
         if metadata_anomaly:
-            lr = 0.90 / 0.05
-            add_evidence("metadata_chronology", lr, "metadata")
+            add_evidence("metadata_chronology", True, 0.90, 0.05, "metadata")
             
         # 9. Deepfake Prompt Injection Vector
         if prompt_injection:
-            lr = 0.95 / 0.02
-            add_evidence("prompt_injection", lr, "threat_vector")
+            add_evidence("prompt_injection", True, 0.95, 0.02, "threat_vector")
 
         # 10. Malware: Differentiate confirmed executable payload vs signature match
         if confirmed_payload:
             # Verified executable header, unpacked shellcode, or active webshell syntax
-            log_odds += 6.5
+            log_odds = max(log_odds, 3.0) + 5.5
             indicator_weights["confirmed_malicious_payload"] = 6.5
         elif malware_threat:
             # Heuristic signature or YARA pattern match

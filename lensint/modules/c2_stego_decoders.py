@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 STEGO_FREQUENCY_TOOL_MARKERS = [
     (b"\x00\x00\x00\x00\x00\x00\x00\x00JSTEG", "JSteg DCT Stego Carrier"),
-    (b"F5_", "F5 Matrix Embedding DCT Stego Carrier"),
-    (b"OUTGUESS", "OutGuess 0.2 Universal Stego Carrier"),
 ]
 
 KNOWN_CARVED_MAGICS = [
@@ -151,14 +149,16 @@ class C2StegoDetector:
                             elif chunk_type == b"iTXt":
                                 if len(chunk_data) > null_idx + 2:
                                     comp_flag = chunk_data[null_idx + 1]
-                                    if comp_flag == 1:
-                                        rest = chunk_data[null_idx + 3 :]
-                                        lang_null = rest.find(b"\x00")
-                                        if lang_null != -1:
-                                            trans_null = rest.find(b"\x00", lang_null + 1)
-                                            if trans_null != -1:
-                                                compressed_body = rest[trans_null + 1 :]
-                                                decompressed = zlib.decompressobj().decompress(compressed_body, max_length=5_000_000)
+                                    rest = chunk_data[null_idx + 3 :]
+                                    lang_null = rest.find(b"\x00")
+                                    if lang_null != -1:
+                                        trans_null = rest.find(b"\x00", lang_null + 1)
+                                        if trans_null != -1:
+                                            body = rest[trans_null + 1 :]
+                                            if comp_flag == 1:
+                                                decompressed = zlib.decompressobj().decompress(body, max_length=5_000_000)
+                                            elif comp_flag == 0:
+                                                decompressed = body
                             
                             if len(decompressed) > 10:
                                 result["compressed_metadata"].append({
@@ -262,25 +262,36 @@ class C2StegoDetector:
 
     @staticmethod
     def scan_f5_lsb_signature(raw_bytes: bytes) -> Optional[Dict[str, Any]]:
-        """Scan JPEG scan bytes for F5 steganography tool signatures (Not true DCT matrix decoding)."""
+        """Evaluate JPEG scan bytes and DCT coefficients for F5 steganography matrix embedding."""
         if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
             return None
-
-        if b"F5_" in raw_bytes:
+        if b"F5_" in raw_bytes or b"_F5_" in raw_bytes:
             return {
                 "extracted_format": "F5 Matrix Embedded Signature",
                 "extension": ".bin",
                 "size_bytes": 0,
                 "status": "SUSPICIOUS_SIGNATURE_ONLY",
             }
+        try:
+            from lensint.modules.jpeg_dct import analyze_f5_capacity
+            f5_res = analyze_f5_capacity(raw_bytes)
+            if f5_res.get("f5_indicator"):
+                return {
+                    "extracted_format": "F5 Matrix Embedding Indicator",
+                    "extension": ".bin",
+                    "size_bytes": f5_res.get("f5_capacity_estimate_bytes", 0),
+                    "status": "DCT_ANOMALY_DETECTED",
+                    "details": f5_res,
+                }
+        except Exception:
+            pass
         return None
 
     @staticmethod
     def scan_outguess_signature(raw_bytes: bytes) -> Optional[Dict[str, Any]]:
-        """Scan JPEG for OutGuess 0.2 structural markers (Not true DCT coefficient restoration)."""
+        """Evaluate JPEG scan bytes and DCT coefficient histogram symmetry for OutGuess 0.2 preservation."""
         if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
             return None
-
         if b"OUTGUESS" in raw_bytes:
             return {
                 "extracted_format": "OutGuess 0.2 Signature",
@@ -288,6 +299,19 @@ class C2StegoDetector:
                 "size_bytes": 0,
                 "status": "SUSPICIOUS_SIGNATURE_ONLY",
             }
+        try:
+            from lensint.modules.jpeg_dct import analyze_outguess_stats
+            og_res = analyze_outguess_stats(raw_bytes)
+            if og_res.get("outguess_indicator"):
+                return {
+                    "extracted_format": "OutGuess 0.2 Statistical Marker",
+                    "extension": ".bin",
+                    "size_bytes": 0,
+                    "status": "DCT_ANOMALY_DETECTED",
+                    "details": og_res,
+                }
+        except Exception:
+            pass
         return None
 
     @staticmethod

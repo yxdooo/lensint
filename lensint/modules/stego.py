@@ -21,21 +21,91 @@ def _calculate_entropy(data: bytes) -> float:
     return round(entropy, 4)
 
 def detect_overlay_data(raw_bytes: bytes) -> Tuple[bool, Optional[int], int, Optional[bytes]]:
+    """Detect trailing overlay data appended after the valid image container boundary.
+    
+    Uses forward container parsing (PNG chunk stream, JPEG EOI marker, GIF block stream)
+    to prevent false offsets caused by embedded images inside the overlay payload.
+    """
     total = len(raw_bytes)
-    if raw_bytes.startswith(b'\xFF\xD8\xFF'):
-        pos = raw_bytes.rfind(b'\xFF\xD9')
-        if pos != -1 and pos + 2 < total:
-            return True, pos + 2, total - (pos + 2), raw_bytes[pos + 2 :]
-    elif raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
-        pos = raw_bytes.rfind(b'IEND')
-        if pos != -1 and pos + 8 < total:
-            return True, pos + 8, total - (pos + 8), raw_bytes[pos + 8 :]
+    if total < 16:
+        return False, None, 0, None
+
+    # 1. PNG Forward Chunk Walk
+    if raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+        offset = 8
+        while offset + 8 <= total:
+            chunk_len = int.from_bytes(raw_bytes[offset : offset + 4], "big")
+            chunk_type = raw_bytes[offset + 4 : offset + 8]
+            next_offset = offset + 12 + chunk_len
+            if chunk_type == b'IEND':
+                end_pos = offset + 12
+                if end_pos < total:
+                    return True, end_pos, total - end_pos, raw_bytes[end_pos:]
+                return False, None, 0, None
+            if next_offset > total:
+                break
+            offset = next_offset
+
+    # 2. JPEG Marker Stream Walk
+    elif raw_bytes.startswith(b'\xFF\xD8\xFF'):
+        pos = 2
+        in_sos = False
+        while pos + 1 < total:
+            if not in_sos:
+                if raw_bytes[pos] != 0xFF:
+                    break
+                marker = raw_bytes[pos + 1]
+                if marker == 0xD9:  # EOI
+                    end_pos = pos + 2
+                    if end_pos < total:
+                        return True, end_pos, total - end_pos, raw_bytes[end_pos:]
+                    return False, None, 0, None
+                elif marker in (0xD8, 0x01) or (0xD0 <= marker <= 0xD7):
+                    pos += 2
+                elif marker == 0xDA:  # SOS
+                    if pos + 4 <= total:
+                        sos_len = int.from_bytes(raw_bytes[pos + 2 : pos + 4], "big")
+                        pos += 2 + sos_len
+                        in_sos = True
+                    else:
+                        break
+                else:
+                    if pos + 4 <= total:
+                        seg_len = int.from_bytes(raw_bytes[pos + 2 : pos + 4], "big")
+                        pos += 2 + seg_len
+                    else:
+                        break
+            else:
+                # Inside entropy-coded scan, find next marker
+                ff_pos = raw_bytes.find(b'\xFF', pos)
+                if ff_pos == -1 or ff_pos + 1 >= total:
+                    break
+                nxt = raw_bytes[ff_pos + 1]
+                if nxt == 0x00 or (0xD0 <= nxt <= 0xD7):
+                    pos = ff_pos + 2
+                elif nxt == 0xD9:  # EOI
+                    end_pos = ff_pos + 2
+                    if end_pos < total:
+                        return True, end_pos, total - end_pos, raw_bytes[end_pos:]
+                    return False, None, 0, None
+                else:
+                    in_sos = False
+                    pos = ff_pos
+
+    # 3. GIF Block Stream Walk
     elif raw_bytes.startswith(b'GIF87a') or raw_bytes.startswith(b'GIF89a'):
-        # GIF trailer is the 2-byte sequence 0x00 0x3B, NOT just 0x3B.
-        # Searching for bare 0x3B produces false positives from frame data.
-        pos = raw_bytes.rfind(b'\x00\x3B')
-        if pos != -1 and pos + 2 < total:
-            return True, pos + 2, total - (pos + 2), raw_bytes[pos + 2 :]
+        from lensint.modules.memory_forensics import _carve_gif_structural
+        gif_bytes = _carve_gif_structural(raw_bytes, 0)
+        if gif_bytes and len(gif_bytes) < total:
+            end_pos = len(gif_bytes)
+            return True, end_pos, total - end_pos, raw_bytes[end_pos:]
+
+    # Fallback for other formats (BMP, WEBP)
+    if raw_bytes.startswith(b'BM') and total > 6:
+        bmp_size = int.from_bytes(raw_bytes[2:6], "little")
+        if 54 <= bmp_size < total:
+            return True, bmp_size, total - bmp_size, raw_bytes[bmp_size:]
+
     return False, None, 0, None
 
 def _is_valid_pe_header(raw_bytes: bytes, offset: int) -> bool:

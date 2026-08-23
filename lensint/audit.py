@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +25,9 @@ def _generate_record_seal(record: Dict[str, Any]) -> str:
     """Generate SHA-256 seal for an audit record payload."""
     canonical_json = json.dumps(record, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+_AUDIT_LOCK = threading.Lock()
 
 
 class ForensicAuditLogger:
@@ -58,9 +62,8 @@ class ForensicAuditLogger:
         case_id: Optional[str] = None,
         examiner: Optional[str] = None,
         notes: Optional[str] = None,
-        custom_log_path: Optional[str] = None,
+        custom_log_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
-        """Record an analysis run to the tamper-evident audit log with chained seal."""
         now_utc = datetime.now(timezone.utc).isoformat()
         case_id = case_id or "UNASSIGNED"
         examiner = examiner or os.getenv("USERNAME") or os.getenv("USER") or "LENSINT_ANALYST"
@@ -71,54 +74,55 @@ class ForensicAuditLogger:
             date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             target_file = self.log_dir / f"lensint_audit_{date_str}.jsonl"
 
-        prev_seal = self._get_last_record_seal(target_file)
+        with _AUDIT_LOCK:
+            prev_seal = self._get_last_record_seal(target_file)
 
-        audit_entry: Dict[str, Any] = {
-            "version": "2.0",
-            "audit_timestamp_utc": now_utc,
-            "framework_version": "3.5.0",
-            "previous_record_seal": prev_seal,
-            "chain_of_custody": {
-                "case_id": case_id,
-                "examiner": examiner,
-                "investigation_notes": notes or "",
-            },
-            "evidence_item": {
-                "target_path": str(result.target_path),
-                "file_name": result.integrity.file_name,
-                "file_size_bytes": result.integrity.file_size_bytes,
-                "detected_format": result.integrity.detected_format,
-                "detected_mime": result.integrity.detected_mime,
-                "hashes": {
-                    "md5": result.integrity.md5,
-                    "sha1": result.integrity.sha1,
-                    "sha256": result.integrity.sha256,
-                    "sha512": result.integrity.sha512,
+            audit_entry: Dict[str, Any] = {
+                "version": "2.0",
+                "audit_timestamp_utc": now_utc,
+                "framework_version": "3.5.0",
+                "previous_record_seal": prev_seal,
+                "chain_of_custody": {
+                    "case_id": case_id,
+                    "examiner": examiner,
+                    "investigation_notes": notes or "",
                 },
-            },
-            "forensic_verdict": {
-                "risk_level": result.overall_risk_level,
-                "risk_score": result.overall_risk_score,
-                "ai_verdict": result.ai_detection.ai_verdict,
-                "tampering_suspicion": result.tampering.suspicion_level,
-                "stego_detected": result.stego.has_overlay_data or result.stego.lsb_stego_detected or getattr(result.stego, 'rs_steganalysis_detected', False),
-                "malware_threats": result.malware.has_threats,
-                "key_findings": result.summary_findings,
-            },
-            "execution_metadata": {
-                "analysis_duration_seconds": round(result.analysis_duration_seconds, 4),
-                "cache_hit": result.cache_hit,
-            },
-        }
+                "evidence_item": {
+                    "target_path": str(result.target_path),
+                    "file_name": result.integrity.file_name,
+                    "file_size_bytes": result.integrity.file_size_bytes,
+                    "detected_format": result.integrity.detected_format,
+                    "detected_mime": result.integrity.detected_mime,
+                    "hashes": {
+                        "md5": result.integrity.md5,
+                        "sha1": result.integrity.sha1,
+                        "sha256": result.integrity.sha256,
+                        "sha512": result.integrity.sha512,
+                    },
+                },
+                "forensic_verdict": {
+                    "risk_level": result.overall_risk_level,
+                    "risk_score": result.overall_risk_score,
+                    "ai_verdict": result.ai_detection.ai_verdict,
+                    "tampering_suspicion": result.tampering.suspicion_level,
+                    "stego_detected": result.stego.has_overlay_data or result.stego.lsb_stego_detected or getattr(result.stego, 'rs_steganalysis_detected', False),
+                    "malware_threats": result.malware.has_threats,
+                    "key_findings": result.summary_findings,
+                },
+                "execution_metadata": {
+                    "analysis_duration_seconds": round(result.analysis_duration_seconds, 4),
+                    "cache_hit": result.cache_hit,
+                },
+            }
 
-        # Cryptographically seal the audit record with chained dependency
-        record_seal = _generate_record_seal(audit_entry)
-        audit_entry["audit_seal_sha256"] = record_seal
+            # Cryptographically seal the audit record with chained dependency
+            record_seal = _generate_record_seal(audit_entry)
+            audit_entry["audit_seal_sha256"] = record_seal
 
-        if config.audit_log_enabled or custom_log_path:
-            self._write_log(audit_entry, target_file)
+            if config.audit_log_enabled or custom_log_path:
+                self._write_log(audit_entry, target_file)
 
-        return audit_entry
+            return audit_entry
 
     def _write_log(self, entry: Dict[str, Any], target_file: Path) -> None:
         """Append audit entry to JSONL ledger."""

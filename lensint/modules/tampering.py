@@ -169,6 +169,7 @@ def detect_copy_move_dct(pil_img: Image.Image) -> Tuple[bool, int]:
         buckets.setdefault(key, []).append(idx)
 
     match_count = 0
+    shift_clusters: Dict[Tuple[int, int], int] = {}
     for key, indices in buckets.items():
         if len(indices) < 2:
             continue
@@ -178,11 +179,14 @@ def detect_copy_move_dct(pil_img: Image.Image) -> Tuple[bool, int]:
             i = sampled_indices[i_pos]
             for j_pos in range(i_pos + 1, len(sampled_indices)):
                 j = sampled_indices[j_pos]
-                dist = np.linalg.norm(coords_arr[i] - coords_arr[j])
+                delta = coords_arr[i] - coords_arr[j]
+                dist = np.linalg.norm(delta)
                 if dist > 50:
                     sim = float(np.dot(features_arr[i], features_arr[j]))
                     if sim > 0.96:
                         match_count += 1
+                        shift_key = (int(round(delta[0] / 16.0)), int(round(delta[1] / 16.0)))
+                        shift_clusters[shift_key] = shift_clusters.get(shift_key, 0) + 1
                         if match_count > 100:
                             break
             if match_count > 100:
@@ -190,7 +194,8 @@ def detect_copy_move_dct(pil_img: Image.Image) -> Tuple[bool, int]:
         if match_count > 100:
             break
                 
-    detected = match_count > 8
+    max_cluster = max(shift_clusters.values()) if shift_clusters else 0
+    detected = max_cluster >= 5 and match_count >= 8
     return detected, match_count
 
 # ============================================================================
@@ -452,6 +457,10 @@ def analyze_chromatic_aberration(pil_img: Image.Image) -> Tuple[float, bool]:
         unit_gy = d_rby[outer_mask] / grad_rb_mag
 
         # Alignment cos(theta)
+        fringe_energy = float(np.mean(grad_rb_mag))
+        if fringe_energy < 1.8:
+            return 0.0, False
+
         alignment = np.abs(unit_rx * unit_gx + unit_ry * unit_gy)
         var_bleed = float(np.var(diff_rb[~outer_mask])) if np.sum(~outer_mask) > 100 else 0.0
 
@@ -730,20 +739,27 @@ def analyze_tampering(
         if dqt_found and dqt_enc:
             report.findings.append(f"DQT Quantization signature matches: {dqt_enc} (Est. Quality: {dqt_q}%).")
 
+        # Native unresampled sensor patch (preserves 2x2 Bayer CFA and 8x8 DCT block grid alignment)
+        if orig_pil_img.width > 2048 or orig_pil_img.height > 2048:
+            cx, cy = orig_pil_img.width // 2, orig_pil_img.height // 2
+            sensor_crop = orig_pil_img.crop((cx - 512, cy - 512, cx + 512, cy + 512))
+        else:
+            sensor_crop = orig_pil_img
+
         # 5. CFA / Bayer Demosaicing
         if is_screenshot:
             report.sensor_heuristics_suppressed = True
             report.cfa_inconsistency_score = 0.0
             report.cfa_tampering_detected = False
         else:
-            cfa_score, cfa_det = analyze_cfa_demosaicing(pil_img)
+            cfa_score, cfa_det = analyze_cfa_demosaicing(sensor_crop)
             report.cfa_inconsistency_score = cfa_score
             report.cfa_tampering_detected = cfa_det
             if cfa_det:
                 report.findings.append(f"CFA Bayer demosaicing anomaly detected (Score: {cfa_score}/100). Splicing suspected.")
 
         # 6. 8x8 DCT Block Grid Shift
-        grid_shifted, grid_phase, bag_score = analyze_block_grid_inconsistency(pil_img)
+        grid_shifted, grid_phase, bag_score = analyze_block_grid_inconsistency(sensor_crop)
         report.block_grid_shifted = grid_shifted and not is_screenshot
         report.block_grid_offset = grid_phase
         report.block_artifact_score = bag_score

@@ -351,6 +351,7 @@ class ImageAnalyzer:
             first_red = result.ocr.sensitive_findings[0]["redacted"]
             findings.append(f"Confidential Data Leak: {leak_count} secret(s) discovered including {first_type} ({first_red}).")
 
+        is_confirmed_payload = False
         # Bayesian Log-Odds Fusion (Uses literature-derived Likelihood Ratios)
         try:
             from lensint.modules.benchmarks import BayesianForensicFusionEngine
@@ -369,6 +370,19 @@ class ImageAnalyzer:
                 )
             )
 
+            has_valid_overlay_payload = bool(
+                result.stego.has_overlay_data and (
+                    any(isinstance(s, dict) and s.get("in_overlay", False) for s in result.stego.embedded_signatures)
+                    or getattr(result.stego, "overlay_size_bytes", 0) > 64
+                )
+            )
+            has_valid_lsb_payload = bool(
+                result.stego.extracted_payload_type and any(
+                    k in result.stego.extracted_payload_type for k in ("ZIP", "Executable", "ELF", "PE", "PDF", "SHELL")
+                )
+            )
+            is_confirmed_payload = has_valid_overlay_payload or has_valid_lsb_payload
+
             calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
                 ela_score=result.tampering.ela_suspicion_score,
                 copy_move_detected=result.tampering.copy_move_detected,
@@ -379,7 +393,7 @@ class ImageAnalyzer:
                 chi_square_detected=result.stego.lsb_stego_detected,
                 metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
                 malware_threat=result.malware.has_threats,
-                confirmed_payload=bool(result.stego.has_overlay_data and result.stego.extracted_payload_type in ("PE/EXE", "ELF", "ZIP/DOCX", "PDF", "SHELL")),
+                confirmed_payload=is_confirmed_payload,
                 c2_stego_detected=has_c2_stego,
                 prompt_injection=has_prompt_injection
             )
@@ -395,11 +409,16 @@ class ImageAnalyzer:
         except Exception as e:
             import logging
             logging.getLogger("lensint.analyzer").error(f"Bayesian Fusion Error: {e}")
-            result.overall_risk_score = 0.0
-            result.overall_risk_level = "ANALYSIS_ERROR"
+            fallback_score = 0.0
+            if result.malware.has_threats: fallback_score = max(fallback_score, 85.0)
+            if result.stego.has_overlay_data: fallback_score = max(fallback_score, 60.0)
+            if result.tampering.copy_move_detected: fallback_score = max(fallback_score, 55.0)
+            if result.tampering.ela_suspicion_score > 50: fallback_score = max(fallback_score, result.tampering.ela_suspicion_score * 0.7)
+            result.overall_risk_score = round(fallback_score, 1)
+            result.overall_risk_level = "HIGH" if fallback_score >= 70 else ("MEDIUM" if fallback_score >= 40 else ("LOW" if fallback_score > 0 else "CLEAN"))
 
         # Failsafe escalation for confirmed malicious malware threats or verified executable overlay payloads
-        if result.malware.has_threats or (result.stego.has_overlay_data and result.stego.extracted_payload_type in ("PE/EXE", "ELF", "ZIP/DOCX")):
+        if result.malware.has_threats or is_confirmed_payload:
             result.overall_risk_level = "CRITICAL"
             result.overall_risk_score = max(90.0, result.overall_risk_score)
 

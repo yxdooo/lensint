@@ -94,12 +94,20 @@ class NeuralDeepfakePipeline:
                 input_name = session.get_inputs()[0].name
                 outputs = session.run(None, {input_name: tensor})
                 
+                out_arr = np.array(outputs[0][0], dtype=np.float32)
+                activation = manifest.get("output_activation", "auto").lower()
                 class_idx = manifest.get("ai_class_index", 1)
-                out_arr = outputs[0][0]
-                if len(out_arr) > class_idx:
-                    prob = float(out_arr[class_idx])
+
+                if activation == "softmax" or (activation == "auto" and len(out_arr) > 1 and (np.min(out_arr) < 0 or np.max(out_arr) > 1.0)):
+                    exp_vals = np.exp(out_arr - np.max(out_arr))
+                    probs = exp_vals / np.sum(exp_vals)
+                    prob = float(probs[class_idx] if len(probs) > class_idx else probs[0])
+                elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1 and (out_arr[0] < 0 or out_arr[0] > 1.0)):
+                    val = float(out_arr[0])
+                    prob = 1.0 / (1.0 + math.exp(-val))
                 else:
-                    prob = float(out_arr[0])
+                    val = float(out_arr[class_idx] if len(out_arr) > class_idx else out_arr[0])
+                    prob = max(0.0, min(1.0, val))
 
                 model_label = f"ONNX Neural Engine ({manifest.get('model_name', os.path.basename(model_path))})"
                 return {

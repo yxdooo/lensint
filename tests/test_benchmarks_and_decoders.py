@@ -54,6 +54,35 @@ class TestBenchmarksAndDecoders(unittest.TestCase):
         res = C2StegoDetector.extract_outguess_payload(fake_jpeg, seed=1234)
         self.assertTrue(res is None or isinstance(res, dict))
 
+    def test_dataset_benchmark_runner_youden_threshold(self):
+        import tempfile
+        import os
+        from PIL import Image
+        from lensint.modules.benchmarks import DatasetBenchmarkRunner
+
+        tmp = tempfile.mkdtemp(prefix="lensint_bench_")
+        clean_dir = os.path.join(tmp, "clean")
+        tamp_dir = os.path.join(tmp, "tampered")
+        os.makedirs(clean_dir, exist_ok=True)
+        os.makedirs(tamp_dir, exist_ok=True)
+
+        for i in range(3):
+            Image.new("RGB", (32, 32), color=(i * 10, 0, 0)).save(os.path.join(clean_dir, f"c_{i}.png"))
+            Image.new("RGB", (32, 32), color=(0, i * 10, 0)).save(os.path.join(tamp_dir, f"t_{i}.png"))
+
+        # Detector returning 20.0 for clean and 80.0 for tampered
+        def dummy_detector(p):
+            return 80.0 if os.path.basename(p).startswith("t_") else 20.0
+
+        runner = DatasetBenchmarkRunner(dummy_detector)
+        metrics = runner.evaluate_directory(clean_dir, tamp_dir, default_threshold=50.0)
+
+        self.assertEqual(metrics["total_evaluated"], 6)
+        self.assertEqual(metrics["total_failed"], 0)
+        self.assertEqual(metrics["roc_auc"], 1.0)
+        self.assertIn("optimal_youden_threshold", metrics)
+        self.assertGreaterEqual(metrics["max_youden_j_index"], 0.99)
+
 
 if __name__ == "__main__":
     unittest.main()

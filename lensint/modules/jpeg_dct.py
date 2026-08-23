@@ -562,10 +562,20 @@ def analyze_outguess_stats(raw_bytes: bytes) -> Dict:
             hist[v + 50] += 1
     pos_h = hist[51:]            # +1 to +50
     neg_h = hist[49::-1][:50]   # -1 to -50 (mirrored)
-    total = pos_h + neg_h + 1e-9
-    diff = np.abs(pos_h - neg_h) / total
+    active_bins = (pos_h + neg_h) > 0
+    if np.sum(pos_h + neg_h) < 50 or np.sum(active_bins) < 5:
+        return {
+            "status": "INSUFFICIENT_NONZERO_AC",
+            "ac_coefficients_analyzed": len(ac_all),
+            "histogram_symmetry_score": 0.0,
+            "outguess_score": 0.0,
+            "outguess_indicator": False,
+        }
+
+    total = pos_h[active_bins] + neg_h[active_bins]
+    diff = np.abs(pos_h[active_bins] - neg_h[active_bins]) / total
     symmetry = float(1.0 - np.mean(diff))
-    indicator = symmetry > 0.90
+    indicator = symmetry > 0.92
     score = min(100.0, max(0.0, (symmetry - 0.80) * 500.0))
     return {
         "status": "ANALYZED",

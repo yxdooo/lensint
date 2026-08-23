@@ -22,6 +22,7 @@ class IntegrityReport:
     has_alpha_channel: bool = False
     is_screenshot: bool = False
     screen_capture_type: Optional[str] = None
+    process_context: List[Dict[str, str]] = field(default_factory=list)
     anomalies: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -284,6 +285,7 @@ class AnalysisResult:
     malware: MalwareReport = field(default_factory=MalwareReport)
     threat_intel: ThreatIntelReport = field(default_factory=ThreatIntelReport)
     ocr: OCRReport = field(default_factory=OCRReport)
+    fusion_telemetry: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -303,4 +305,5 @@ class AnalysisResult:
             "malware": self.malware.to_dict(),
             "threat_intel": self.threat_intel.to_dict(),
             "ocr": self.ocr.to_dict(),
+            "fusion_telemetry": self.fusion_telemetry,
         }

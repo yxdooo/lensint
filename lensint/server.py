@@ -145,6 +145,9 @@ async def serve_ui():
     return HTMLResponse("<h3>LENSINT Web UI is available.</h3>")
 
 
+from starlette.concurrency import run_in_threadpool
+
+
 @app.post("/api/analyze")
 async def analyze_image_json(
     file: UploadFile = File(...),
@@ -157,7 +160,9 @@ async def analyze_image_json(
 ):
     _verify_api_key(x_api_key, authorization)
     try:
-        result = _process_upload_streaming(file, ela_quality, geo_lookup, generate_visuals, use_cache)
+        result = await run_in_threadpool(
+            _process_upload_streaming, file, ela_quality, geo_lookup, generate_visuals, use_cache
+        )
         return JSONResponse(content=result.to_dict())
     except HTTPException:
         raise
@@ -177,7 +182,9 @@ async def analyze_image_html(
 ):
     _verify_api_key(x_api_key, authorization)
     try:
-        result = _process_upload_streaming(file, ela_quality, geo_lookup, generate_visuals, use_cache)
+        result = await run_in_threadpool(
+            _process_upload_streaming, file, ela_quality, geo_lookup, generate_visuals, use_cache
+        )
         return HTMLResponse(content=render_html_report(result))
     except HTTPException:
         raise
@@ -200,7 +207,9 @@ async def analyze_batch(
     results = []
     for file in files:
         try:
-            result = _process_upload_streaming(file, ela_quality, geo_lookup, generate_visuals, use_cache)
+            result = await run_in_threadpool(
+                _process_upload_streaming, file, ela_quality, geo_lookup, generate_visuals, use_cache
+            )
             results.append(result.to_dict())
         except Exception as e:
             results.append({"error": str(e), "filename": file.filename})

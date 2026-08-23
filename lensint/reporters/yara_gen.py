@@ -29,12 +29,25 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
     strings_lines.append(f'        $sha256 = "{result.integrity.sha256}" ascii wide')
 
     # 2. Magic byte container header
+    has_magic = False
     if result.integrity.detected_format == "JPEG":
         strings_lines.append('        $magic = { FF D8 FF }')
+        has_magic = True
     elif result.integrity.detected_format == "PNG":
         strings_lines.append('        $magic = { 89 50 4E 47 0D 0A 1A 0A }')
+        has_magic = True
     elif result.integrity.detected_format == "GIF":
         strings_lines.append('        $magic = { 47 49 46 38 }')
+        has_magic = True
+    elif result.integrity.detected_format == "WEBP":
+        strings_lines.append('        $magic = { 52 49 46 46 }')
+        has_magic = True
+    elif result.integrity.detected_format == "BMP":
+        strings_lines.append('        $magic = { 42 4D }')
+        has_magic = True
+    elif result.integrity.detected_format == "TIFF":
+        strings_lines.append('        $magic = { 49 49 2A 00 }')
+        has_magic = True
 
     # 3. YARA matched patterns or threat signatures
     str_idx = 1
@@ -60,7 +73,8 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
         str_idx += 1
 
     # 6. Conditions
-    conditions.append("$magic at 0")
+    if has_magic:
+        conditions.append("$magic at 0")
     if str_idx > 1:
         conditions.append(f"1 of ($sig_*, $deobf_*, $cmd_*)")
     else:

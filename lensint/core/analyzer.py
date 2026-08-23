@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 import os
 import time
 from typing import Optional
@@ -15,6 +16,8 @@ from lensint.modules.ai_detect import analyze_ai_generation
 from lensint.modules.malware_rules import analyze_malware_and_polyglots
 from lensint.modules.threat_intel import generate_threat_intel_links, reverse_geocode
 from lensint.utils.image_ops import load_image_safe
+
+logger = logging.getLogger("lensint.analyzer")
 
 
 class ImageAnalyzer:
@@ -126,7 +129,25 @@ class ImageAnalyzer:
             return analyze_strings(raw_bytes, min_len=self.min_string_len)
 
         def _run_ai_detect():
-            return analyze_ai_generation(raw_bytes, pil_img.copy() if pil_img else None, generate_visuals=self.generate_visuals)
+            ai_rep = analyze_ai_generation(raw_bytes, pil_img.copy() if pil_img else None, generate_visuals=self.generate_visuals)
+            try:
+                from lensint.modules.neural_ai import NeuralDeepfakePipeline
+                from lensint.config import config
+                model_path = getattr(config, "onnx_model_path", None)
+                if model_path and os.path.exists(model_path):
+                    pipeline = NeuralDeepfakePipeline(model_path=model_path)
+                    if pipeline.is_available() and pil_img:
+                        res = pipeline.predict(pil_img)
+                        if res.get("status") == "INFERRED":
+                            prob = float(res.get("deepfake_probability", 0.0))
+                            ai_rep.ai_probability_score = max(ai_rep.ai_probability_score, prob)
+                            if ai_rep.ai_probability_score >= 0.70:
+                                ai_rep.is_ai_generated = True
+                                ai_rep.ai_verdict = "AI_SYNTHETIC_GENERATED"
+                                ai_rep.findings.append(f"ONNX Neural Deepfake Pipeline Flagged Image (Probability: {ai_rep.ai_probability_score:.2f}).")
+            except Exception as e:
+                logger.debug(f"Neural deepfake pipeline check: {e}")
+            return ai_rep
 
         def _run_malware():
             return analyze_malware_and_polyglots(raw_bytes)
@@ -335,10 +356,21 @@ class ImageAnalyzer:
             has_c2_stego = result.stego.c2_stego_detected or result.stego.dct_stego_detected
             has_prompt_injection = result.ai_detection.prompt_injection_detected
             
+            is_dqt_tampered = bool(
+                result.tampering.dqt_hardware_mismatch
+                or (
+                    result.tampering.dqt_identified_encoder
+                    and any(
+                        ed in result.tampering.dqt_identified_encoder.lower()
+                        for ed in ("photoshop", "gimp", "paint", "canva", "editor", "transcoder")
+                    )
+                )
+            )
+
             calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
                 ela_score=result.tampering.ela_difference_max,
                 copy_move_detected=result.tampering.copy_move_detected,
-                dqt_anomaly=result.tampering.dqt_found,
+                dqt_anomaly=is_dqt_tampered,
                 cfa_anomaly=result.tampering.cfa_tampering_detected,
                 fft_ai_score=result.ai_detection.fft_spectral_score,
                 rs_stego_detected=result.stego.rs_steganalysis_detected,

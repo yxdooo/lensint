@@ -43,7 +43,8 @@ def perform_ela(pil_img: Image.Image, quality: int = 90, multiplier: float = 15.
     h, w, _ = orig_arr.shape
     
     diff_sum = np.zeros((h, w, 3), dtype=np.float32)
-    for q in [70, 80, 90]:
+    qualities = [max(10, quality - 10), quality, min(100, quality + 5)]
+    for q in qualities:
         buf = io.BytesIO()
         orig_rgb.save(buf, format="JPEG", quality=q)
         buf.seek(0)
@@ -51,7 +52,7 @@ def perform_ela(pil_img: Image.Image, quality: int = 90, multiplier: float = 15.
         recomp_arr = np.array(recompressed, dtype=np.float32)
         diff_sum += np.abs(orig_arr - recomp_arr)
         
-    diff = diff_sum / 3.0
+    diff = diff_sum / float(len(qualities))
 
     mean_diff = float(np.mean(diff))
     max_diff = float(np.max(diff))
@@ -118,15 +119,17 @@ def detect_copy_move_dct(pil_img: Image.Image) -> Tuple[bool, int]:
         return False, 0
     gray = np.array(pil_img.convert("L"), dtype=np.float32)
     h, w = gray.shape
-    block_size = 16
-    if h < block_size or w < block_size:
+    if h < 64 or w < 64 or np.std(gray) < 2.0:
         return False, 0
         
+    block_size = 16
     features = []
     coords = []
     for y in range(0, h - block_size + 1, block_size):
         for x in range(0, w - block_size + 1, block_size):
-            blk = gray[y:y+block_size, x:x+block_size]
+            blk = gray[y : y + block_size, x : x + block_size]
+            if np.std(blk) < 1.0:
+                continue  # Skip pure flat/solid blocks
             dct_blk = cv2.dct(blk)
             feat = dct_blk.flatten()[1:]
             norm = np.linalg.norm(feat)
@@ -135,24 +138,38 @@ def detect_copy_move_dct(pil_img: Image.Image) -> Tuple[bool, int]:
             features.append(feat)
             coords.append((x, y))
             
-    if not features:
+    if len(features) < 10:
         return False, 0
         
-    features = np.array(features, dtype=np.float32)
-    coords = np.array(coords, dtype=np.float32)
-    
+    features_arr = np.array(features, dtype=np.float32)
+    coords_arr = np.array(coords, dtype=np.float32)
+
+    # Quantize primary low-frequency DCT coefficients into hash buckets (O(N) search)
+    quantized = np.round(features_arr[:, :8] * 12.0).astype(np.int32)
+    buckets: Dict[Tuple[int, ...], List[int]] = {}
+    for idx, qv in enumerate(quantized):
+        key = tuple(qv)
+        buckets.setdefault(key, []).append(idx)
+
     match_count = 0
-    n = len(features)
-    for i in range(n):
-        sims = np.dot(features[i+1:], features[i])
-        high_sim_idx = np.where(sims > 0.98)[0]
-        for j_idx in high_sim_idx:
-            j = i + 1 + j_idx
-            dist = np.linalg.norm(coords[i] - coords[j])
-            if dist > 50:
-                match_count += 1
-                if match_count > 100: # Cap to avoid huge loops
-                    break
+    for key, indices in buckets.items():
+        if len(indices) < 2:
+            continue
+        # Limit comparisons per bucket to prevent flat-region combinatoric explosion
+        sampled_indices = indices[:30]
+        for i_pos in range(len(sampled_indices)):
+            i = sampled_indices[i_pos]
+            for j_pos in range(i_pos + 1, len(sampled_indices)):
+                j = sampled_indices[j_pos]
+                dist = np.linalg.norm(coords_arr[i] - coords_arr[j])
+                if dist > 50:
+                    sim = float(np.dot(features_arr[i], features_arr[j]))
+                    if sim > 0.96:
+                        match_count += 1
+                        if match_count > 100:
+                            break
+            if match_count > 100:
+                break
         if match_count > 100:
             break
                 
@@ -288,15 +305,35 @@ def analyze_dqt_tables(raw_bytes: bytes) -> Tuple[bool, Optional[str], Optional[
 # 5. CFA / Bayer Demosaicing Residual Analysis
 # ============================================================================
 def analyze_cfa_demosaicing(pil_img: Image.Image) -> Tuple[float, bool]:
+    """Analyze Bayer CFA demosaicing residuals using directional gradient interpolation.
+
+    Evaluates whether green channel interpolation residuals follow periodic CFA
+    patterns in flat/textured regions, with directional weighting to avoid false
+    positives on sharp physical edges.
+    """
     rgb = np.array(pil_img.convert("RGB"), dtype=np.float32)
     h, w, _ = rgb.shape
     if h < 64 or w < 64 or np.std(rgb) < 2.0:
         return 0.0, False
 
     green = rgb[:, :, 1]
+    
+    # Compute horizontal and vertical second differences
+    dh = np.abs(green[1:-1, :-2] - green[1:-1, 2:])
+    dv = np.abs(green[:-2, 1:-1] - green[2:, 1:-1])
+
+    # Directional interpolation: interpolate along direction of smallest gradient
     recon = np.zeros_like(green)
-    recon[1:-1, 1:-1] = (green[:-2, 1:-1] + green[2:, 1:-1] + green[1:-1, :-2] + green[1:-1, 2:]) / 4.0
-    residual = np.abs(green[1:-1, 1:-1] - recon[1:-1, 1:-1])
+    h_interp = (green[1:-1, :-2] + green[1:-1, 2:]) / 2.0
+    v_interp = (green[:-2, 1:-1] + green[2:, 1:-1]) / 2.0
+    avg_interp = (green[:-2, 1:-1] + green[2:, 1:-1] + green[1:-1, :-2] + green[1:-1, 2:]) / 4.0
+
+    mask_h = dh < (dv * 0.7)
+    mask_v = dv < (dh * 0.7)
+    mask_avg = ~(mask_h | mask_v)
+
+    recon_inner = np.where(mask_h, h_interp, np.where(mask_v, v_interp, avg_interp))
+    residual = np.abs(green[1:-1, 1:-1] - recon_inner)
 
     block_size = 16
     block_vars = []
@@ -312,8 +349,8 @@ def analyze_cfa_demosaicing(pil_img: Image.Image) -> Tuple[float, bool]:
     mean_v = float(np.mean(bv))
     if mean_v > 0.1:
         cv_cfa = float(np.std(bv) / mean_v)
-        cfa_score = min(100.0, round(cv_cfa * 35.0, 2))
-        return cfa_score, cfa_score >= 60.0
+        cfa_score = min(100.0, round(cv_cfa * 25.0, 2))
+        return cfa_score, cfa_score >= 65.0
 
     return 0.0, False
 
@@ -514,7 +551,7 @@ def analyze_noise_consistency(pil_img: Image.Image) -> float:
     return 0.0
 
 
-def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True) -> Tuple[bool, float, Optional[str]]:
+def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True) -> Tuple[bool, float, Optional[str], List[Dict[str, Any]]]:
     gray = np.array(pil_img.convert("L"), dtype=np.float32)
     h, w = gray.shape
     block_size = 64
@@ -525,7 +562,7 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
     for y in range(0, h - block_size + 1, block_size):
         row_vars = []
         for x in range(0, w - block_size + 1, block_size):
-            blk = gray[y:y+block_size, x:x+block_size]
+            blk = gray[y : y + block_size, x : x + block_size]
             if HAS_CV2:
                 lap = cv2.Laplacian(blk.astype(np.float64), cv2.CV_64F)
             else:
@@ -537,7 +574,7 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
         var_map.append(row_vars)
         
     if not variances:
-        return False, 0.0, None
+        return False, 0.0, None, []
         
     mean_v = np.mean(variances)
     std_v = np.std(variances)
@@ -546,6 +583,21 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
     detected = bool(ratio > 1.2)
     confidence = float(min(100.0, float(ratio) * 40.0))
     
+    detected_boxes: List[Dict[str, Any]] = []
+    if detected and var_map:
+        threshold = mean_v + 1.8 * std_v
+        for r, row in enumerate(var_map):
+            for c, val in enumerate(row):
+                if val > threshold:
+                    detected_boxes.append({
+                        "x": c * block_size,
+                        "y": r * block_size,
+                        "w": block_size,
+                        "h": block_size,
+                        "type": "noise_variance_outlier",
+                        "confidence": round(min(100.0, float((val - mean_v) / (std_v + 1e-6)) * 25.0), 1),
+                    })
+
     b64_img = None
     if generate_visuals and var_map:
         var_map_arr = np.array(var_map)
@@ -576,7 +628,7 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
                 
         b64_img = numpy_to_base64_png(np.array(img))
         
-    return detected, confidence, b64_img
+    return detected, confidence, b64_img, detected_boxes
 
 # ============================================================================
 # Master Tampering & Deep Forensic Orchestrator
@@ -709,7 +761,7 @@ def analyze_tampering(
 
         # Splice Detection
         if not is_screenshot and (orig_pil_img.format == 'JPEG' or (w >= 200 and h >= 200)):
-            splice_det, splice_conf, splice_vis = analyze_splice_detection(orig_pil_img, generate_visuals)
+            splice_det, splice_conf, splice_vis, splice_boxes = analyze_splice_detection(orig_pil_img, generate_visuals)
             if hasattr(report, 'splice_detected'):
                 report.splice_detected = splice_det
                 report.splice_confidence = splice_conf
@@ -718,7 +770,10 @@ def analyze_tampering(
             if splice_det:
                 report.findings.append(f"Image splicing / local composition detected (Confidence: {splice_conf:.1f}%).")
                 if hasattr(report, 'detected_regions'):
-                    report.detected_regions.append({"x": 0, "y": 0, "w": w, "h": h, "type": "splice_candidate", "confidence": splice_conf})
+                    if splice_boxes:
+                        report.detected_regions.extend(splice_boxes)
+                    else:
+                        report.detected_regions.append({"x": 0, "y": 0, "w": w, "h": h, "type": "splice_candidate", "confidence": splice_conf})
 
         # Composite Forensic Scoring
         # Use the report fields (which already have screenshot suppression applied)

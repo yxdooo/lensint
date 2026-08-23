@@ -70,13 +70,13 @@ class DirectoryWatcher:
         """Check if file has finished writing by comparing size over an observation window."""
         try:
             initial_size = os.path.getsize(path)
-            time.sleep(0.5)
+            time.sleep(0.3)
             final_size = os.path.getsize(path)
             if initial_size != final_size or final_size == 0:
                 return False
-            # Check for basic read/write availability
-            with open(path, "ab"):
-                pass
+            # Check for basic read availability
+            with open(path, "rb") as f:
+                f.read(16)
             return True
         except OSError:
             return False
@@ -115,8 +115,14 @@ class DirectoryWatcher:
                                 self.processed_files[file_fingerprint] = time.time()
                                 self.processed_files.move_to_end(file_fingerprint)
                             
+                            # Capture active process snapshot during drop
+                            active_procs = self.inspect_process_telemetry()
+
                             analyzer = ImageAnalyzer(full_path, use_cache=True)
                             res = analyzer.analyze()
+                            if active_procs and res.integrity:
+                                res.integrity.process_context = active_procs[:20]
+
                             results.append(res)
                             if self.alert_callback and res.overall_risk_level in ("HIGH", "CRITICAL"):
                                 self.alert_callback(res)

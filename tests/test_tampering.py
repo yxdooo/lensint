@@ -25,9 +25,10 @@ class TestTamperingModule(unittest.TestCase):
 
     def test_splice_detection(self):
         img = Image.new("RGB", (128, 128), color=(100, 100, 100))
-        detected, conf, b64_map = analyze_splice_detection(img, generate_visuals=False)
+        detected, conf, b64_map, boxes = analyze_splice_detection(img, generate_visuals=False)
         self.assertIsInstance(detected, bool)
         self.assertIsInstance(conf, float)
+        self.assertIsInstance(boxes, list)
 
     def test_copy_move_cloning_detection(self):
         # Create image with duplicated pattern

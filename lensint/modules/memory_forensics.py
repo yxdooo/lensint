@@ -125,8 +125,13 @@ class MemoryForensicsEngine:
                     cur += 2 + length
                     while cur < total_len - 1 and (cur - jpg_pos) < self.max_carve_size:
                         if raw_memory[cur] == 0xFF and raw_memory[cur + 1] != 0x00 and not (0xD0 <= raw_memory[cur + 1] <= 0xD7):
+                            if raw_memory[cur + 1] == 0xD9:
+                                cur += 2
+                                found_eoi = True
                             break
                         cur += 1
+                    if found_eoi:
+                        break
                 else:
                     if cur + 4 > total_len:
                         break
@@ -167,6 +172,7 @@ class MemoryForensicsEngine:
                     img_data = raw_memory[webp_pos : webp_pos + total_size]
                     try:
                         with Image.open(io.BytesIO(img_data)) as test_img:
+                            test_img.load()
                             w, h = test_img.size
                             if w >= 8 and h >= 8:
                                 all_candidates.append({
@@ -195,6 +201,7 @@ class MemoryForensicsEngine:
                     img_data = raw_memory[gif_pos : trailer_pos + 1]
                     try:
                         with Image.open(io.BytesIO(img_data)) as test_img:
+                            test_img.load()
                             w, h = test_img.size
                             if w >= 8 and h >= 8:
                                 all_candidates.append({

@@ -157,28 +157,29 @@ def bruteforce_stego_dictionary(
     raw_bytes: bytes,
     custom_wordlist: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Test standard steganography passwords against carrier metadata."""
+    """Inspect carrier for known tool container markers (OpenStego, StegHide, OutGuess)
+    and provide extraction instructions.
+    """
     words = list(COMMON_STEGO_PASSWORDS)
     if custom_wordlist:
         words.extend(custom_wordlist)
 
-    # Check for OpenStego marker
-    if b"OPENSTEGO" in raw_bytes:
-        # Check if unencrypted or uses common passwords
+    # Check for OpenStego container marker
+    if b"OPENSTEGO" in raw_bytes or b"OpenStego" in raw_bytes:
         return {
             "tool": "OpenStego",
-            "status": "Carrier Detected",
-            "candidate_passwords_tested": len(words),
-            "recommendation": "Use OpenStego GUI or CLI with dictionary wordlist.",
+            "status": "CONTAINER_DETECTED",
+            "wordlist_size": len(words),
+            "recommendation": "Use OpenStego extractor with candidate passphrases.",
         }
 
-    # Check for StegHide marker
+    # Check for StegHide container signatures
     if b"steghide" in raw_bytes.lower() or b"\x7f\xfe\x00" in raw_bytes:
         return {
             "tool": "StegHide",
-            "status": "Carrier Detected",
-            "candidate_passwords_tested": len(words),
-            "recommendation": "Execute: steghide extract -sf image.jpg -p <passphrase>",
+            "status": "CONTAINER_DETECTED",
+            "wordlist_size": len(words),
+            "recommendation": "Execute: steghide extract -sf <image> -p <passphrase>",
         }
 
     return None

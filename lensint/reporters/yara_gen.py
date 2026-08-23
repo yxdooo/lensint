@@ -52,11 +52,16 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
     # 3. YARA matched patterns or threat signatures
     str_idx = 1
     for hit in result.malware.yara_matches:
-        for s in hit.get("strings_matched", []):
-            if len(s) >= 4:
-                safe_s = s.replace("\\", "\\\\").replace('"', '\\"')
-                strings_lines.append(f'        $sig_{str_idx} = "{safe_s}" ascii wide nocase')
-                str_idx += 1
+        if isinstance(hit, dict):
+            for s in hit.get("strings_matched", []):
+                if len(s) >= 4:
+                    safe_s = s.replace("\\", "\\\\").replace('"', '\\"')
+                    strings_lines.append(f'        $sig_{str_idx} = "{safe_s}" ascii wide nocase')
+                    str_idx += 1
+        elif isinstance(hit, str):
+            safe_s = hit.replace("\\", "\\\\").replace('"', '\\"')
+            strings_lines.append(f'        $sig_{str_idx} = "{safe_s}" ascii wide nocase')
+            str_idx += 1
 
     # 4. Deobfuscated payloads
     for d in result.malware.deobfuscated_payloads:
@@ -75,8 +80,17 @@ def generate_yara_rule(result: AnalysisResult, rule_name: Optional[str] = None) 
     # 6. Conditions
     if has_magic:
         conditions.append("$magic at 0")
-    if str_idx > 1:
-        conditions.append(f"1 of ($sig_*, $deobf_*, $cmd_*)")
+
+    active_groups = []
+    if any("$sig_" in s for s in strings_lines):
+        active_groups.append("$sig_*")
+    if any("$deobf_" in s for s in strings_lines):
+        active_groups.append("$deobf_*")
+    if any("$cmd_" in s for s in strings_lines):
+        active_groups.append("$cmd_*")
+
+    if active_groups:
+        conditions.append(f"1 of ({', '.join(active_groups)})")
     else:
         conditions.append("filesize < 100MB")
 

@@ -370,7 +370,7 @@ class ImageAnalyzer:
             )
 
             calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
-                ela_score=result.tampering.ela_difference_max,
+                ela_score=result.tampering.ela_suspicion_score,
                 copy_move_detected=result.tampering.copy_move_detected,
                 dqt_anomaly=is_dqt_tampered,
                 cfa_anomaly=result.tampering.cfa_tampering_detected,

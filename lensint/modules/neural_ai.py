@@ -88,7 +88,8 @@ class NeuralDeepfakePipeline:
             return {"heuristic_anomaly_score": 0.0, "model_used": "None", "anomalies": []}
 
         # 1. ONNX Model Inference if model file is present
-        model_path = os.path.join(self.model_dir, "deepfake_detector.onnx")
+        model_filename = getattr(self, "model_file", "deepfake_detector.onnx")
+        model_path = os.path.join(self.model_dir, model_filename)
         if self.onnx_available and os.path.exists(model_path):
             manifest = self._load_manifest()
             

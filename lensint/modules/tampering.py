@@ -108,6 +108,19 @@ def detect_copy_move(pil_img: Image.Image, min_matches: int = 8) -> Tuple[bool, 
             if spatial_dist > 40:
                 good_matches.append(m1)
 
+    # RANSAC Coherent Geometric Displacement Verification
+    if len(good_matches) >= 4:
+        src_pts = np.float32([keypoints[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        try:
+            _, inlier_mask = cv2.estimateAffinePartial2D(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=8.0)
+            if inlier_mask is not None:
+                inliers = [m for m, inl in zip(good_matches, inlier_mask.ravel()) if inl]
+                if len(inliers) >= min(min_matches, 4):
+                    good_matches = inliers
+        except Exception:
+            pass
+
     match_count = len(good_matches)
     detected = match_count >= min_matches
 

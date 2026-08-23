@@ -137,9 +137,20 @@ def analyze_palette_steganography(pil_img: Image.Image) -> Dict[str, Any]:
         if i + 2 < len(palette):
             colors.append((palette[i], palette[i+1], palette[i+2]))
 
-    result["palette_size"] = len(colors)
-    unique_colors = set(colors)
-    duplicates = len(colors) - len(unique_colors)
+    try:
+        img_arr = np.array(pil_img)
+        used_indices = set(np.unique(img_arr).tolist())
+    except Exception:
+        used_indices = set(range(len(colors)))
+
+    active_colors = [colors[i] for i in sorted(used_indices) if i < len(colors)]
+    result["palette_size"] = len(active_colors)
+
+    if len(active_colors) < 4:
+        return result
+
+    unique_colors = set(active_colors)
+    duplicates = len(active_colors) - len(unique_colors)
     result["duplicate_colors"] = duplicates
 
     if duplicates > 0:
@@ -150,11 +161,11 @@ def analyze_palette_steganography(pil_img: Image.Image) -> Dict[str, Any]:
 
     # Check for near-identical color pairs (difference <= 2 across RGB)
     near_duplicates = 0
-    for i in range(len(colors)):
-        for j in range(i + 1, len(colors)):
-            dr = abs(colors[i][0] - colors[j][0])
-            dg = abs(colors[i][1] - colors[j][1])
-            db = abs(colors[i][2] - colors[j][2])
+    for i in range(len(active_colors)):
+        for j in range(i + 1, len(active_colors)):
+            dr = abs(active_colors[i][0] - active_colors[j][0])
+            dg = abs(active_colors[i][1] - active_colors[j][1])
+            db = abs(active_colors[i][2] - active_colors[j][2])
             if 0 < (dr + dg + db) <= 2:
                 near_duplicates += 1
 

@@ -91,24 +91,28 @@ def extract_lsb_hidden_payload(pil_img: Image.Image) -> Optional[str]:
             (arr.flatten(), "Interleaved-RGB"),
         ]
 
-        def _is_valid_zip(data: bytes) -> bool:
-            # Minimal structural validation for ZIP Central Directory or EoCD
-            # Since LSB payloads are small in the first block, we just ensure it's not random \x03\x04
-            return b"PK\x01\x02" in data or b"PK\x05\x06" in data or len(data) > 30
+        def _is_valid_zip(data: bytes, pos: int) -> bool:
+            # Minimal structural validation for ZIP Local File Header fields
+            if pos + 30 > len(data):
+                return False
+            comp_method = int.from_bytes(data[pos + 8 : pos + 10], "little")
+            if comp_method not in (0, 8, 12, 14, 99):  # Common valid zip compression methods
+                return False
+            return b"PK\x01\x02" in data[pos:] or b"PK\x05\x06" in data[pos:] or comp_method in (0, 8)
 
         # Scan deeper (up to 64KB instead of 2KB) to catch payloads with offsets
         for channel_arr, _ in channel_combinations:
             packed = np.packbits((channel_arr & 1)[: 524288]).tobytes()  # 65536 bytes
             for sig, label in KNOWN_SIGS.items():
                 pos = packed.find(sig)
-                if pos != -1 and pos < 1024: # Payload must start somewhat early
-                    # Add simple container validation to reduce false positives
+                if pos != -1 and pos < 1024:  # Payload must start somewhat early
+                    # Add container validation to reduce false positives
                     if sig == b'MZ':
                         if not _is_valid_pe_header(packed, pos):
-                            continue # MZ False positive, skip
+                            continue
                     if sig == b'PK\x03\x04':
-                        if not _is_valid_zip(packed):
-                            continue # ZIP False positive, skip
+                        if not _is_valid_zip(packed, pos):
+                            continue
                     return f"{label} (Offset: {pos} bytes)"
     except Exception:
         pass
@@ -118,35 +122,26 @@ KNOWN_STEGO_TOOL_SIGNATURES = [
     {"name": "OpenStego Carrier", "pattern": b"OPENSTEGO", "desc": "OpenStego default signature header"},
     {"name": "SilentEye Steganography", "pattern": b"SE\x00\x00", "desc": "SilentEye standard payload header"},
     {"name": "JPHide DCT Carrier", "pattern": b"\xFF\xFE\x00\x08JPHIDE", "desc": "JPHide embedded JPEG signature"},
-    {"name": "StegHide Header Artifact", "pattern": b"\x73\x74\x65\x67\x68\x69\x64\x65", "desc": "StegHide unstripped identifier"},
-    {"name": "F5 Steganography Matrix", "pattern": b"F5\x00\x01", "desc": "F5 algorithm coefficient header"},
+    {"name": "Camouflage Cloaked", "pattern": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x55\xAA\x55\xAA", "desc": "Camouflage file hider marker"},
 ]
 
 
 def perform_rs_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
-    """Perform RS (Regular / Singular) Steganalysis to detect LSB replacement.
-
-    RS steganalysis divides the image into groups of 4 adjacent pixels and applies
-    flipping masks M = [0, 1, 1, 0] and -M = [0, -1, -1, 0].
-    For a natural clean image: R_M ≈ R_-M and S_M ≈ S_-M.
-    When LSB embedding occurs, R_M decreases while S_M increases.
-
+    """Perform Fridrich et al. RS (Regular-Singular) Steganalysis on image array.
+    
+    Divides pixels into contiguous disjoint groups and measures variation
+    under dual flipping functions F_1 and F_{-1}.
+    
     Returns:
-        (stego_detected: bool, estimated_embedding_rate: float in [0.0, 1.0])
+        (stego_detected: bool, estimated_embedding_rate: float)
     """
     try:
-        # Work on green channel (most sensitive for RGB images) or grayscale
+        # Evaluate green channel or luminance
         if len(arr.shape) == 3:
-            channel = arr[:, :, 1].astype(np.int32)
+            flat = arr[:, :, 1].flatten()
         else:
-            channel = arr.astype(np.int32)
+            flat = arr.flatten()
 
-        # Texture guard: flat or low-variance regions produce meaningless RS stats
-        if float(np.var(channel)) < 10.0:
-            return False, 0.0
-
-        h, w = channel.shape
-        flat = channel.flatten()
         # Ensure length is multiple of 4
         n_pixels = (len(flat) // 4) * 4
         if n_pixels < 1024:
@@ -260,28 +255,29 @@ def perform_chi_square_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         degrees_of_freedom = 0
 
         for k in range(0, 256, 2):
-            h_even = counts[k]
-            h_odd = counts[k + 1]
-            e_k = (h_even + h_odd) / 2.0
-            if e_k > 5:
-                chi_square += ((h_even - e_k) ** 2) / e_k
+            h_even = float(counts[k])
+            h_odd = float(counts[k + 1])
+            pair_sum = h_even + h_odd
+            if pair_sum > 10:
+                # Full chi-square contribution: ((h_even - E)^2 + (h_odd - E)^2) / E = (h_even - h_odd)^2 / (h_even + h_odd)
+                chi_square += ((h_even - h_odd) ** 2) / pair_sum
                 degrees_of_freedom += 1
 
         if degrees_of_freedom < 10:
             return False, 0.0
 
+        dof = max(1, degrees_of_freedom - 1)
         try:
             from scipy.stats import chi2
-            p_val = chi2.sf(chi_square, degrees_of_freedom) # exact survival function
+            p_val = chi2.sf(chi_square, dof)  # exact survival function
         except ImportError:
             # Fallback normal approximation for Chi-Square distribution p-value
-            z = (chi_square - degrees_of_freedom) / np.sqrt(2.0 * degrees_of_freedom)
+            z = (chi_square - dof) / np.sqrt(2.0 * dof)
             p_val = float(0.5 * (1.0 - math.erf(z / math.sqrt(2.0))))
             
         p_equalized = float(p_val)
-        
-        # When p_equalized is high (> 0.95), LSB PoVs have been artificially flattened
-        is_stego = p_equalized >= 0.95
+        chi_ratio = chi_square / float(dof)
+        is_stego = (p_equalized >= 0.10) or (chi_ratio <= 1.25)
         return is_stego, round(p_equalized, 4)
     except Exception:
         return False, 0.0

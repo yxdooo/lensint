@@ -62,41 +62,50 @@ def calculate_fft_spectrum(pil_img: Image.Image) -> Tuple[np.ndarray, float, flo
     return norm_vis, round(score, 2), round(peak_ratio, 2), score >= 50.0
 
 
-def analyze_gan_fingerprint(arr: np.ndarray) -> Tuple[bool, float, float]:
-    fft2 = np.fft.fft2(arr)
-    fft_shifted = np.fft.fftshift(fft2)
+def analyze_gan_fingerprint(arr: Any) -> Tuple[bool, float, float]:
+    if isinstance(arr, Image.Image):
+        arr = np.array(arr.convert("L"), dtype=np.float32)
+    elif isinstance(arr, np.ndarray) and len(arr.shape) == 3:
+        arr = np.mean(arr.astype(np.float32), axis=2)
+
+    if np.iscomplexobj(arr):
+        fft_shifted = arr
+    else:
+        fft2 = np.fft.fft2(arr)
+        fft_shifted = np.fft.fftshift(fft2)
+
     magnitude = np.log(np.abs(fft_shifted) + 1.0)
-    
-    h, w = magnitude.shape
-    total_energy = float(np.sum(magnitude)) + 1e-6
-    
-    bin_h, bin_w = max(1, h // 8), max(1, w // 8)
-    periodic_energy = 0.0
-    
-    for i in range(8):
-        for j in range(8):
-            if i in [3, 4] and j in [3, 4]:
-                continue
-            bin_mag = magnitude[i*bin_h:(i+1)*bin_h, j*bin_w:(j+1)*bin_w]
-            if bin_mag.size > 0:
-                peak = float(np.max(bin_mag))
-                periodic_energy += peak
-                
-    gan_score = min(100.0, (periodic_energy / total_energy) * 500.0)
-    gan_detected = gan_score > 25.0
-    
+    h, w = magnitude.shape[:2]
     cy, cx = h // 2, w // 2
     y, x = np.ogrid[:h, :w]
     dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+
+    # 1. GAN Up-sampling Grid Artifacts: Peak-to-Average Power Ratio (PAPR)
+    # Exclude DC center component (dist <= 4)
+    ac_mask = dist > 4
+    ac_mag = magnitude[ac_mask]
+    if len(ac_mag) > 0:
+        median_mag = max(0.5, float(np.median(ac_mag)))
+        p99_mag = float(np.percentile(ac_mag, 99.5))
+        papr = p99_mag / median_mag
+        # Natural images exhibit smooth 1/f power falloff (PAPR < 5.0); GAN upsampling grid produces sharp spikes (PAPR > 6.0)
+        gan_score = min(100.0, max(0.0, (papr - 5.0) * 18.0))
+        gan_detected = gan_score >= 45.0
+    else:
+        gan_score = 0.0
+        gan_detected = False
     
+    # 2. Diffusion Spectral Power Density Slope
     mf_mask = (dist > min(h, w) * 0.1) & (dist < min(h, w) * 0.25)
     hf_mask = (dist >= min(h, w) * 0.25)
     
-    mf_energy = float(np.sum(magnitude[mf_mask])) if np.any(mf_mask) else 1.0
-    hf_energy = float(np.sum(magnitude[hf_mask])) if np.any(hf_mask) else 0.0
+    mf_density = float(np.mean(magnitude[mf_mask])) if np.any(mf_mask) else 1.0
+    hf_density = float(np.mean(magnitude[hf_mask])) if np.any(hf_mask) else 0.0
     
-    diff_ratio = hf_energy / (mf_energy + 1e-6)
-    diffusion_score = min(100.0, diff_ratio * 40.0)
+    # Natural images have steep 1/f roll-off (density_ratio < 0.45).
+    # Iterative diffusion denoising introduces elevated high-frequency plateau (density_ratio > 0.65).
+    density_ratio = hf_density / (mf_density + 1e-6)
+    diffusion_score = min(100.0, max(0.0, (density_ratio - 0.45) * 180.0))
     
     return gan_detected, round(gan_score, 2), round(diffusion_score, 2)
 
@@ -107,12 +116,12 @@ def scan_ai_metadata(raw_bytes: bytes, pil_img: Optional[Image.Image]) -> Dict[s
         "parameters": {},
         "c2pa_manifest_detected": False,
         "c2pa_markers": [],
+        "ai_metadata_mentions": [],
     }
 
-    # Structural / binary C2PA markers — these are definitive when found anywhere.
+    # Structural / binary C2PA markers — definitive provenance manifest signatures
     STRUCTURAL_C2PA = [b"c2pa", b"C2PA", b"urn:c2pa", b"jumb", b"Adobe Content Authenticity"]
-    # Brand-name strings that could also appear in free-text (copyright, descriptions).
-    # Only treat them as C2PA evidence when found inside a clear metadata/XMP/JSON context.
+    # Brand-name strings in metadata
     BRAND_C2PA = [b"OpenAI", b"Midjourney", b"DALL-E", b"StableDiffusion", b"NovelAI"]
     CONTEXT_CHARS = set(b'"\'<>={};,')  # characters that suggest a structured context
 
@@ -126,15 +135,15 @@ def scan_ai_metadata(raw_bytes: bytes, pil_img: Optional[Image.Image]) -> Dict[s
     for sig in BRAND_C2PA:
         idx = raw_bytes.find(sig)
         while idx != -1:
-            # Check one byte before and after for a structured-context character
             before = raw_bytes[max(0, idx - 1): idx]
             after = raw_bytes[idx + len(sig): idx + len(sig) + 1]
             if (before and before[0] in CONTEXT_CHARS) or (after and after[0] in CONTEXT_CHARS):
-                meta["c2pa_manifest_detected"] = True
-                name = sig.decode("ascii", errors="ignore")
-                if name not in meta["c2pa_markers"]:
-                    meta["c2pa_markers"].append(name)
-                break  # one confirmed hit per brand is enough
+                brand_name = sig.decode("ascii", errors="ignore")
+                if brand_name not in meta["ai_metadata_mentions"]:
+                    meta["ai_metadata_mentions"].append(brand_name)
+                if not meta["generator"]:
+                    meta["generator"] = brand_name
+                break
             idx = raw_bytes.find(sig, idx + 1)
 
     if pil_img and hasattr(pil_img, "info") and pil_img.info:

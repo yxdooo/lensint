@@ -40,9 +40,10 @@ class TestWave8Remediation(unittest.TestCase):
             "overall_risk_level": "HIGH",
             "summary_findings": ["Secret Leak Detected"],
             "ocr": {
+                "ocr_performed": True,
                 "extracted_text": "AKIAIOSFODNN7EXAMPLE",
-                "secrets_detected": [{"type": "AWS Access Key", "value": "AKIA***"}],
-                "confidential_data_leaked": True,
+                "api_keys_found": ["AKIAIOSFODNN7EXAMPLE"],
+                "sensitive_findings": [{"type": "AWS Access Key", "value": "AKIA***"}],
             },
             "fusion_telemetry": {
                 "calibrated_score": 75.5,
@@ -54,7 +55,7 @@ class TestWave8Remediation(unittest.TestCase):
         result = analyzer._result_from_dict(sample_dict)
         self.assertTrue(result.cache_hit)
         self.assertEqual(result.ocr.extracted_text, "AKIAIOSFODNN7EXAMPLE")
-        self.assertTrue(result.ocr.confidential_data_leaked)
+        self.assertEqual(result.ocr.api_keys_found, ["AKIAIOSFODNN7EXAMPLE"])
         self.assertEqual(result.fusion_telemetry.get("status"), "CALIBRATED_TEST")
         self.assertEqual(result.fusion_telemetry.get("calibrated_score"), 75.5)
 

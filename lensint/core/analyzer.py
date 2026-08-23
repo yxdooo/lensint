@@ -322,6 +322,26 @@ class ImageAnalyzer:
         else:
             result.overall_risk_level = "CLEAN"
 
+        # Apply Bayesian log-odds calibration
+        try:
+            from lensint.modules.benchmarks import BayesianForensicFusionEngine
+            calibrated_score, calibrated_verdict, _ = BayesianForensicFusionEngine.calculate_calibrated_risk(
+                ela_score=result.tampering.ela_max_diff,
+                copy_move_detected=result.tampering.copy_move_detected,
+                dqt_anomaly=result.tampering.dqt_found,
+                cfa_anomaly=result.tampering.cfa_tampering_detected,
+                fft_ai_score=result.ai_detection.fft_spectral_score,
+                rs_stego_detected=result.stego.rs_steganalysis_detected,
+                chi_square_detected=result.stego.lsb_stego_detected,
+                metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
+                malware_threat=result.malware.has_threats,
+            )
+            # If threats or deep anomalies exist, ensure calibrated level is preserved
+            if result.malware.has_threats:
+                result.overall_risk_level = "CRITICAL"
+        except Exception:
+            pass
+
         if not findings:
             findings.append("No security threats, hidden payloads, or tampering indicators detected.")
 

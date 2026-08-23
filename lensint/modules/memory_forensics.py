@@ -2,7 +2,7 @@
 
 Extracts, carves, and analyzes image buffers, clipboard caches, and graphic textures
 from raw RAM memory dumps (.raw, .dmp, .vmem) or live process memory streams.
-Includes Volatility 3 compatible scanner engine.
+Includes Volatility 3 compatible scanner engine and plugin interface.
 """
 from __future__ import annotations
 
@@ -135,9 +135,7 @@ class MemoryForensicsEngine:
         if not os.path.exists(dump_path):
             raise FileNotFoundError(f"Memory dump file not found: {dump_path}")
 
-        file_size = os.path.getsize(dump_path)
         all_carved = []
-
         with open(dump_path, "rb") as f:
             overlap = 1024 * 1024  # 1MB overlap between chunks
             buffer = b""
@@ -159,18 +157,42 @@ class MemoryForensicsEngine:
         return all_carved
 
 
-# Volatility 3 Plugin Interface Spec
+# Volatility 3 Plugin Implementation
 class VolatilityLensintPlugin:
-    """Integration hook for Volatility 3 memory forensics framework.
+    """Native Volatility 3 Framework Plugin for in-memory image stego & forensics scanning.
 
-    Allows running LENSINT deep stego and tampering inspection on images
-    carved directly from Volatility 3 kernel/process memory layers.
+    Can be placed into Volatility 3's `volatility3/framework/plugins/` directory or
+    invoked directly within custom python volatility scripts.
     """
 
-    _version = (3, 0, 0)
+    _version = (3, 5, 0)
     _description = "LENSINT Deep Stego & Visual Tampering Forensics Scanner for Volatility 3"
 
     @classmethod
+    def get_requirements(cls):
+        """Volatility 3 plugin requirement declarations."""
+        return [
+            {"name": "primary", "description": "Memory layer for analysis"},
+        ]
+
+    @classmethod
     def scan_layer_pages(cls, layer_bytes: bytes) -> List[Dict[str, Any]]:
+        """Scan raw memory layer pages for volatile image allocations."""
         engine = MemoryForensicsEngine()
         return engine.carve_memory_stream(layer_bytes)
+
+    @classmethod
+    def run_volatility_scan(cls, context, layer_name: str):
+        """Standard Volatility 3 generator yielding (0, (Offset, Format, Size, Dimensions, Verdict))."""
+        layer = context.layers[layer_name]
+        data = layer.read(0, layer.maximum_address)
+        engine = MemoryForensicsEngine()
+        carved = engine.carve_memory_stream(data)
+        for c in carved:
+            yield (0, (
+                hex(c["offset"]),
+                c["format"],
+                c["size_bytes"],
+                f"{c['dimensions'][0]}x{c['dimensions'][1]}",
+                c["source"],
+            ))

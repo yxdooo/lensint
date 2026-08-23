@@ -1,13 +1,15 @@
-"""Real-Time Image Artifact Watcher & CAPE / Cuckoo Sandbox Ingestion Engine.
+"""Real-Time Image Artifact Watcher, Process Attribution & Sandbox Ingestion Engine.
 
 Provides:
-1. Real-time file system directory monitoring for incident response and SOC evidence drops.
-2. Dynamic analysis sandbox capture ingestion (CAPE / Cuckoo screenshots & dropped artifacts).
+1. Continuous real-time directory event monitoring for incident response and SOC evidence drops.
+2. Process attribution telemetry (correlating dropped artifacts with active processes).
+3. Dynamic analysis sandbox capture ingestion (CAPE / Cuckoo screenshots & dropped artifacts).
 """
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -31,6 +33,31 @@ class RealtimeDropMonitor:
         self.min_risk = min_risk_to_alert
         self.processed_files: Set[str] = set()
         self._running = False
+
+    @staticmethod
+    def inspect_process_telemetry() -> List[Dict[str, str]]:
+        """Capture active process snapshot to correlate dropped image artifacts."""
+        processes = []
+        try:
+            if os.name == "nt":
+                # Windows tasklist
+                cmd = ["tasklist", "/FO", "CSV", "/NH"]
+                output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
+                for line in output.strip().split("\n")[:20]:
+                    parts = [p.strip(' "\r') for p in line.split(",")]
+                    if len(parts) >= 2:
+                        processes.append({"image_name": parts[0], "pid": parts[1]})
+            else:
+                # Linux / Unix ps
+                cmd = ["ps", "-eo", "pid,comm", "--no-headers"]
+                output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
+                for line in output.strip().split("\n")[:20]:
+                    parts = line.strip().split(None, 1)
+                    if len(parts) == 2:
+                        processes.append({"pid": parts[0], "image_name": parts[1]})
+        except Exception:
+            pass
+        return processes
 
     def scan_new_drops_once(self) -> List[AnalysisResult]:
         """Scan directory once for any newly added image evidence."""

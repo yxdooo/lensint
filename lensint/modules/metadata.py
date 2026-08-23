@@ -4,7 +4,7 @@ Metadata module: EXIF, IPTC, XMP, ICC profiles, and software footprint analysis.
 
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 from PIL import Image, ExifTags
 

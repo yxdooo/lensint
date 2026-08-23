@@ -6,10 +6,11 @@
 [![STIX 2.1](https://img.shields.io/badge/STIX-2.1%20Ready-green.svg)](https://oasis-open.github.io/cti-documentation/)
 [![MISP](https://img.shields.io/badge/MISP-Event%20Ready-red.svg)](https://www.misp-project.org/)
 [![YARA](https://img.shields.io/badge/YARA-Auto%20Generator-orange.svg)](https://virustotal.github.io/yara/)
-[![Volatility 3](https://img.shields.io/badge/Volatility%203-Plugin%20Ready-blueviolet.svg)](https://github.com/volatilityfoundation/volatility3)
-[![CI/CD](https://img.shields.io/badge/CI%2FCD-Passing-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
+[![Tests](https://img.shields.io/badge/tests-73%20passed-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
 
 LENSINT is an advanced digital image forensics and threat hunting framework built for incident response, threat intelligence, and artifact analysis. It provides multi-dimensional inspection by combining classical physical image tampering analysis with steganography decoding, anomaly detection, neural model inference, and credential scanning.
+
+> **Transparency Notice:** LENSINT's stego extractors (F5, OutGuess, JSteg) operate at the JPEG byte-stream level, not the true DCT coefficient domain. They are useful for heuristic detection and carrier identification — not guaranteed cross-tool interoperability decoding. See inline docstrings for the full scope of each algorithm.
 
 ---
 
@@ -17,36 +18,50 @@ LENSINT is an advanced digital image forensics and threat hunting framework buil
 
 ### 1. Memory Forensics (`--carve-memory`)
 - **Volatile RAM Dump Carver**: Carves image buffers (`PNG`, `JPEG`, `BMP`, `DIB`) directly from raw RAM dumps (`.raw`, `.dmp`, `.vmem`).
-- **In-Memory Buffer Scanner**: Detects concealed in-memory webshells and stego images unmapped on disk.
+- **Correct Chunk Overlap Offset Calculation**: Absolute evidence offsets are computed as `c["offset"] + offset_base - len(overlap_buffer)` — preventing ~1MB misattribution on multi-chunk streams.
+- **SHA-256 Deduplication**: Carved payloads are deduplicated by cryptographic SHA-256 hash.
+- **UUID-keyed Output Filenames**: Exported carve images use UUID suffixes to prevent overwrites across multiple dump sessions.
 
 ### 2. C2 Steganography & Covert Channel Extractors
-- **Frequency & Matrix Extractor Algorithms**:
-  - **F5 Matrix Embedding Decoder**: Extracts syndrome matrix payloads from non-zero LSB coefficient streams.
+- **Heuristic Byte-Stream Extractors** (Not true DCT domain decoders):
+  - **F5 Matrix Embedding Decoder**: Syndrome matrix payload extraction from non-zero LSB coefficient byte streams.
   - **OutGuess 0.2 Extractor**: LCG PRNG-steered coefficient bit sequence extraction with configurable seeds.
-  - **JSteg Extractor**: Byte-stream based LSB extraction from JPEG entropy-coded scan data.
+  - **JSteg Extractor**: Byte-stream LSB extraction from JPEG entropy-coded scan data.
   - **Westfeld's Chi-Square ($\chi^2$) Analysis**: Mathematical test on Pairs of Values (PoVs) to detect LSB replacement.
-  - **RS (Regular/Singular) Steganalysis**: Quantifies LSB replacement rate and estimates embedding capacity.
-- **PNG Covert Channel & Chunk Anomaly Analyzer**:
+  - **RS (Regular/Singular) Steganalysis**: Indicates potential LSB anomaly rate and estimates embedding capacity.
+- **PNG Structural Anomaly Analyzer**:
   - Detects non-standard custom chunk injections (`coVT`, `stEG`).
-  - Flags **CRC32 Checksum Mismatches** and decompresses `zTXt`/`iTXt` hidden compression tunnels.
+  - Flags **CRC32 Checksum Mismatches** and decompresses `zTXt`/`iTXt` compressed metadata chunks.
 
 ### 3. Neural AI & Feature Extraction Pipeline
-- **ONNX Model Inference**: Local execution support for neural forensics models via ONNX Runtime with configurable preprocessing and tensor shapes defined in `manifest.json`.
+- **ONNX Model Inference**: Local execution for neural forensics models via ONNX Runtime.
+  - Strict manifest schema validation: `input_size` (2 ints), `mean`/`std` (3 floats each), explicit `activation` (`softmax`/`sigmoid`/`none`).
+  - Quantized `int8` model support with mandatory `quantization_scale` and `quantization_zero_point`.
+  - Multi-input model rejection for forensic safety.
 - **Academic Forensic Feature Layer**:
   - **High-Frequency Laplacian Residual Noise Energy**: Quantifies synthetic generator low-noise floor anomalies.
-  - **Spatial Gradient Curvature & Smoothness Ratio**: Detects diffusion-generated smoothness signatures (Heuristic Anomaly Score).
+  - **Spatial Gradient Curvature & Smoothness Ratio**: Detects diffusion-generated smoothness signatures (Heuristic).
   - **Inter-Channel Chrominance Correlation ($r_{RG}$)**: Flags unnatural RGB alignment in AI generators.
-- **Diffusion Prompt Injection Scanner**: Regex pattern scanner for EXIF/PNG parameters and OCR text to flag prompt injection vectors (`"Ignore previous instructions"`, `"DAN Mode"`).
+- **Diffusion Prompt Injection Scanner**: Regex pattern scanner for EXIF/PNG parameters and OCR text to flag prompt injection vectors.
 
 ### 4. Bayesian Multi-Modal Risk Fusion & Scientific Evaluation Harness
-- **Context-Aware Prior Probabilities**: Configurable priors for incident triage ($P_0 = 0.20$), OSINT ($P_0 = 0.05$), and forensic inquiry ($P_0 = 0.50$).
-- **Correlation Attenuation & Dependency Discounting**: Applies logarithmic decay to correlated indicators (e.g. ELA + DQT recompression overlap) to prevent artificial posterior inflation.
-- **Executable Benchmark Harness (`DatasetBenchmarkRunner`)**: Evaluates user-provided ground-truth labeled datasets, computes empirical confusion matrices, and calculates ROC-AUC dynamically with Train/Test Youden J Threshold optimization.
+- **Log-Odds Bayesian Fusion Engine** with default prior $P_0 = 0.10$ (realistic forensic base rate).
+  - C2 Stego and Prompt Injection findings are fully wired into the Likelihood Ratio calculation.
+  - **Fail-close behavior**: Any internal fusion exception returns `ANALYSIS_ERROR` — never silently defaults to `CLEAN`.
+  - **Cache poisoning protection**: `ANALYSIS_ERROR` results are never written to disk cache.
+- **Correlation Attenuation & Dependency Discounting**: Logarithmic decay applied to correlated indicators to prevent artificial posterior inflation.
+- **Executable Benchmark Harness (`DatasetBenchmarkRunner`)**:
+  - AUC inversion handling: when `AUC < 0.5`, TP/FP/TN/FN thresholds flip to `s ≤ threshold`.
+  - **Balanced Accuracy** metric `(TPR + TNR) / 2` added for class-imbalanced forensic datasets.
+  - Youden J index optimal threshold search across all unique score candidates.
 
 ### 5. Polling-based Directory Watcher & Sandbox Dynamic Ingestion
-- **Continuous Artifact Drop Monitor (`--watch-dir`)**: Real-time polling event loop watching evidence dropzones and triggering multi-dimensional forensic analysis.
-- **Active Process Snapshot Telemetry**: Captures point-in-time process snapshots to correlate newly dropped image artifacts with potential writer processes.
-- **Sandbox Ingestion (`--sandbox-dir`)**: Ingests automated sandbox run directories, scans for credential leaks via OCR, and produces an automated sandbox threat verdict (`CLEAN`, `SUSPICIOUS`, `MALICIOUS`).
+- **Continuous Artifact Drop Monitor (`--watch-dir`)**: Real-time polling watcher on evidence dropzones.
+  - **Note:** Uses point-in-time OS process snapshots (`tasklist`/`ps`) — not kernel-level ETW/Sysmon/inotify tracing. Short-lived writer processes may not be captured.
+- **Sandbox Ingestion (`--sandbox-dir`)**: Ingests automated sandbox run directories, scans for credential leaks via OCR.
+  - Failed artifact ingestions are logged with a `failed_ingestions` counter — no silent failures.
+  - Artifact paths reported as relative paths from `sandbox_dir` to disambiguate subdirectories.
+  - **Note:** Parses visual screenshots only — does not ingest raw Cuckoo/CAPE telemetry JSON (process trees, API logs).
 
 ### 6. OCR & Confidential Secret Leak Hunter
 - **Secret & API Key Hunter**: Scans screenshots and documents for exposed credentials:
@@ -61,17 +76,17 @@ LENSINT is an advanced digital image forensics and threat hunting framework buil
   - Cryptocurrency Seed Recovery Phrases (12/24 BIP39 word sequences)
 
 ### 7. SOC Threat Hunting & Forensic Chain of Custody
-- **Automated YARA Rule Generator (`--generate-yara`)**: Compiles deployable `.yar` rules matching detected hashes, magic headers, webshell patterns, and embedded payloads. Supports native `yara-python` compilation with transparent fallback.
+- **Automated YARA Rule Generator (`--generate-yara`)**: Compiles deployable `.yar` rules matching detected hashes, magic headers, webshell patterns, and embedded payloads.
 - **MISP JSON Event Exporter (`--misp`)**: Generates standardized MISP threat events with classified IOCs and attributes.
 - **STIX 2.1 Threat Intelligence Bundles (`--stix`)**: Exports threat actor bundles with file hashes and network IOCs.
-- **ISO/IEC 27037 Tamper-Evident Chained Audit Ledger (`--case-id`, `--examiner`)**: Cryptographically links every audit record to the preceding record's SHA-256 seal (`previous_record_seal`), enabling full chain-of-custody verification (`verify_audit_chain`).
+- **ISO/IEC 27037 Tamper-Evident Chained Audit Ledger (`--case-id`, `--examiner`)**: Cryptographically links every audit record via SHA-256 seal, enabling full chain-of-custody verification.
 
 ### 8. Image Tampering & Physics-Based Forensics
 - **Multi-Scale Error Level Analysis (ELA)**: Evaluates compression disparity across calibrated qualities ($Q \in \{70, 80, 90\}$).
 - **Splice & Noise Inconsistency Map**: Block-wise high-pass Laplacian noise variance mapping.
 - **Copy-Move (Cloning) Keypoint Detector**: ORB keypoint descriptor clustering to flag cloned regions.
 - **Extended DQT Hardware/Software Database**: 50+ profiles for Apple iPhone 11-16 Pro, Samsung Galaxy S20-S24 Ultra, Google Pixel, Canon, Nikon, Sony, DJI Drones, Photoshop, Lightroom, GIMP, and WhatsApp/Telegram transcoders.
-- **CFA Bayer Demosaicing**: Detects disruptions in camera sensor color interpolation grids.
+- **CFA Bayer Demosaicing Anomaly Detection**: Detects disruptions in camera sensor color interpolation grids.
 - **8x8 DCT Block Grid Phase Shift**: Identifies pasted patches misaligned with the global 8x8 DCT grid phase.
 
 ---
@@ -133,7 +148,7 @@ Open `http://localhost:8000` in your browser to access the interactive web inter
 ## Running Automated Unit Tests
 
 ```bash
-# Run all 69 modular unit tests across 25 forensic engines
+# Run all 73 modular unit tests across forensic engines
 pytest tests/ -v --cov=lensint
 ```
 
@@ -142,3 +157,5 @@ pytest tests/ -v --cov=lensint
 ## License
 
 Distributed under the **MIT License**. See `LICENSE` for more information.
+
+

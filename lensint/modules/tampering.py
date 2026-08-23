@@ -254,11 +254,13 @@ def analyze_dqt_tables(raw_bytes: bytes) -> Tuple[bool, Optional[str], Optional[
             pos += 2
             continue
         payload = raw_bytes[pos + 4 : pos + 2 + length]
-        if len(payload) >= 65:
-            table_id = payload[0] & 0x0F
+        offset = 0
+        while offset + 65 <= len(payload):
+            table_id = payload[offset] & 0x0F
             name = "Luminance" if table_id == 0 else f"Chrominance_{table_id}"
-            dqt_tables[name] = list(payload[1:65])
+            dqt_tables[name] = list(payload[offset + 1 : offset + 65])
             found = True
+            offset += 65
         pos += 2 + length
 
     if found and "Luminance" in dqt_tables:
@@ -412,8 +414,6 @@ def analyze_illumination_consistency(pil_img: Image.Image) -> Tuple[float, bool]
     magnitude = np.sqrt(gx**2 + gy**2)
     angles = np.arctan2(gy, gx)
 
-    # magnitude and angles are shape (h-2, w-2).  Use (h-2) and (w-2) for
-    # the quad split so slices stay within bounds.
     mh, mw = magnitude.shape
     mid_y, mid_x = mh // 2, mw // 2
     quad_angles = []
@@ -430,13 +430,22 @@ def analyze_illumination_consistency(pil_img: Image.Image) -> Tuple[float, bool]
         quad_ang = angles[sy, sx]
         high_grad = quad_mag > np.percentile(quad_mag, 85)
         if np.sum(high_grad) > 50:
-            quad_angles.append(float(np.mean(quad_ang[high_grad])))
+            sin_mean = np.mean(np.sin(quad_ang[high_grad]))
+            cos_mean = np.mean(np.cos(quad_ang[high_grad]))
+            circ_mean = float(np.arctan2(sin_mean, cos_mean))
+            quad_angles.append(circ_mean)
 
     if len(quad_angles) < 4:
         return 0.0, False
 
-    angle_diffs = [abs(quad_angles[i] - quad_angles[j]) for i in range(len(quad_angles)) for j in range(i + 1, len(quad_angles))]
-    max_divergence = max(angle_diffs)
+    angle_diffs = []
+    for i in range(len(quad_angles)):
+        for j in range(i + 1, len(quad_angles)):
+            delta = abs(quad_angles[i] - quad_angles[j])
+            circ_diff = min(delta, 2 * math.pi - delta)
+            angle_diffs.append(circ_diff)
+
+    max_divergence = max(angle_diffs) if angle_diffs else 0.0
     illumination_score = min(100.0, round((max_divergence / math.pi) * 80.0, 2))
 
     return illumination_score, illumination_score >= 60.0
@@ -486,8 +495,12 @@ def analyze_splice_detection(pil_img: Image.Image, generate_visuals: bool = True
         row_vars = []
         for x in range(0, w - block_size + 1, block_size):
             blk = gray[y:y+block_size, x:x+block_size]
-            lap = cv2.Laplacian(blk.astype(np.float64), cv2.CV_64F) if HAS_CV2 else blk
-            var = np.var(lap) if HAS_CV2 else np.var(blk)
+            if HAS_CV2:
+                lap = cv2.Laplacian(blk.astype(np.float64), cv2.CV_64F)
+            else:
+                p = np.pad(blk, 1, mode="reflect")
+                lap = p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:] - 4.0 * blk
+            var = np.var(lap)
             row_vars.append(var)
             variances.append(var)
         var_map.append(row_vars)

@@ -46,7 +46,7 @@ def extract_lsb_payload(
     arr = np.array(img)
     h, w, c = arr.shape
 
-    # Extract 1-bit LSB from selected channels
+    # Extract 1-bit LSB from selected channels with vectorized NumPy operations
     channel_indices = []
     for char in channels.upper():
         if char == "R": channel_indices.append(0)
@@ -56,28 +56,12 @@ def extract_lsb_payload(
     if not channel_indices:
         channel_indices = [0, 1, 2]
 
-    # Collect LSB bits
-    bits = []
-    for y in range(h):
-        for x in range(w):
-            for ci in channel_indices:
-                bits.append(int(arr[y, x, ci] & 1))
-                if len(bits) >= max_bytes * 8:
-                    break
-            if len(bits) >= max_bytes * 8:
-                break
-        if len(bits) >= max_bytes * 8:
-            break
+    selected = arr[:, :, channel_indices] & 1
+    flat_bits = selected.reshape(-1)
+    if len(flat_bits) > max_bytes * 8:
+        flat_bits = flat_bits[: max_bytes * 8]
 
-    # Pack bits into bytes
-    byte_arr = bytearray()
-    for i in range(0, len(bits) - 7, 8):
-        byte_val = 0
-        for b in range(8):
-            byte_val = (byte_val << 1) | bits[i + b]
-        byte_arr.append(byte_val)
-
-    extracted_bytes = bytes(byte_arr)
+    extracted_bytes = np.packbits(flat_bits).tobytes()
 
     # Check for known file headers in extracted bitstream
     for magic, name, ext in KNOWN_MAGIC_HEADERS:

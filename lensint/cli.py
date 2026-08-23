@@ -249,14 +249,18 @@ def main(args_list: List[str] = None) -> int:
 
     is_batch = len(targets) > 1
 
-    def _batch_path(base_path: str, stem: str) -> str:
-        """Insert <stem> before the extension of base_path when in batch mode."""
+    import threading
+    import hashlib
+    print_lock = threading.Lock()
+
+    def _batch_path(base_path: str, stem: str, file_hash: str) -> str:
+        """Insert <stem_hash> before the extension of base_path when in batch mode."""
         if not is_batch:
             return base_path
         root, ext = os.path.splitext(base_path)
-        return f"{root}_{stem}{ext}"
+        return f"{root}_{stem}_{file_hash[:6]}{ext}"
 
-    def process_target(current_target: str) -> None:
+    def process_target(current_target: str) -> bool:
         try:
             analyzer = ImageAnalyzer(
                 file_path=current_target,
@@ -268,17 +272,19 @@ def main(args_list: List[str] = None) -> int:
             )
 
             result = analyzer.analyze()
-            render_console_report(result, console=console, quiet=args.quiet)
+            with print_lock:
+                render_console_report(result, console=console, quiet=args.quiet)
 
-            if getattr(result, 'cache_hit', False):
-                console.print(f"[dim]⚡ Result loaded from cache for {os.path.basename(current_target)}[/dim]")
-            if hasattr(result, 'analysis_duration_seconds'):
-                console.print(f"[dim]Analysis completed in {result.analysis_duration_seconds:.2f}s[/dim]")
+                if getattr(result, 'cache_hit', False):
+                    console.print(f"[dim]⚡ Result loaded from cache for {os.path.basename(current_target)}[/dim]")
+                if hasattr(result, 'analysis_duration_seconds'):
+                    console.print(f"[dim]Analysis completed in {result.analysis_duration_seconds:.2f}s[/dim]")
 
             target_stem = os.path.splitext(os.path.basename(current_target))[0]
+            target_hash = result.integrity.sha256
 
             if args.extract_overlay:
-                out_overlay = _batch_path(args.extract_overlay, target_stem)
+                out_overlay = _batch_path(args.extract_overlay, target_stem, target_hash)
                 if result.stego.has_overlay_data:
                     from lensint.modules.stego import detect_overlay_data
                     with open(current_target, "rb") as f:
@@ -287,41 +293,48 @@ def main(args_list: List[str] = None) -> int:
                     if ov_bytes:
                         with open(out_overlay, "wb") as f_out:
                             f_out.write(ov_bytes)
-                        console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
+                        with print_lock:
+                            console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
                 else:
-                    console.print(f"[yellow]No overlay data found in {os.path.basename(current_target)}.[/yellow]")
+                    with print_lock:
+                        console.print(f"[yellow]No overlay data found in {os.path.basename(current_target)}.[/yellow]")
 
             if args.json:
-                json_path = _batch_path(args.json, target_stem)
+                json_path = _batch_path(args.json, target_stem, target_hash)
                 with open(json_path, "w", encoding="utf-8") as jf:
                     jf.write(render_json_report(result))
-                console.print(f"[bold green]JSON forensic report written to:[/bold green] {json_path}")
+                with print_lock:
+                    console.print(f"[bold green]JSON forensic report written to:[/bold green] {json_path}")
 
             if args.html:
-                html_path = _batch_path(args.html, target_stem)
+                html_path = _batch_path(args.html, target_stem, target_hash)
                 with open(html_path, "w", encoding="utf-8") as hf:
                     hf.write(render_html_report(result))
-                console.print(f"[bold green]HTML forensic report written to:[/bold green] {html_path}")
+                with print_lock:
+                    console.print(f"[bold green]HTML forensic report written to:[/bold green] {html_path}")
 
             if args.stix:
                 from lensint.reporters.stix_rep import export_stix_report
-                stix_path = _batch_path(args.stix, target_stem)
+                stix_path = _batch_path(args.stix, target_stem, target_hash)
                 export_stix_report(result, stix_path)
-                console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
+                with print_lock:
+                    console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
 
             if args.misp:
                 from lensint.reporters.misp_rep import render_misp_report
-                misp_path = _batch_path(args.misp, target_stem)
+                misp_path = _batch_path(args.misp, target_stem, target_hash)
                 with open(misp_path, "w", encoding="utf-8") as mf:
                     mf.write(render_misp_report(result))
-                console.print(f"[bold green]MISP JSON event written to:[/bold green] {misp_path}")
+                with print_lock:
+                    console.print(f"[bold green]MISP JSON event written to:[/bold green] {misp_path}")
 
             if args.generate_yara:
                 from lensint.reporters.yara_gen import generate_yara_rule
-                yara_path = _batch_path(args.generate_yara, target_stem)
+                yara_path = _batch_path(args.generate_yara, target_stem, target_hash)
                 with open(yara_path, "w", encoding="utf-8") as yf:
                     yf.write(generate_yara_rule(result))
-                console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
+                with print_lock:
+                    console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
 
             # Forensic Audit Trail & Chain of Custody Record
             if not args.no_audit:
@@ -336,16 +349,23 @@ def main(args_list: List[str] = None) -> int:
                     console.print(f"[dim]🔒 Sealed audit record saved (Seal: {audit_entry['audit_seal_sha256'][:12]}...)[/dim]")
                     
         except Exception as e:
-            console.print(f"[bold red]Failed to process {current_target}:[/bold red] {e}")
+            with print_lock:
+                console.print(f"[bold red]Failed to process {current_target}:[/bold red] {e}")
+            return False
+        return True
 
     if is_batch:
         from concurrent.futures import ThreadPoolExecutor
         console.print(f"[bold cyan]Starting batch analysis for {len(targets)} files...[/bold cyan]")
-        with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
-            executor.map(process_target, targets)
+        max_threads = min(os.cpu_count() or 1, 8)
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            results = list(executor.map(process_target, targets))
+            if not all(results):
+                return 1
     else:
         for t in targets:
-            process_target(t)
+            if not process_target(t):
+                return 1
 
     return 0
 

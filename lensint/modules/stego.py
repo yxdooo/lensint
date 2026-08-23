@@ -91,9 +91,13 @@ def extract_lsb_hidden_payload(pil_img: Image.Image) -> Optional[str]:
             (arr.reshape(-1, 3)[:, 0], "Interleaved-R"),
         ]
         for channel_arr, _ in channel_combinations:
-            packed = np.packbits((channel_arr.flatten() & 1)[:8192]).tobytes()
+            packed = np.packbits((channel_arr.flatten() & 1)[:16384]).tobytes()  # 2048 bytes
             for sig, label in KNOWN_SIGS.items():
                 if packed.startswith(sig):
+                    # Add simple container validation to reduce false positives on MZ
+                    if sig == b'MZ':
+                        if not _is_valid_pe_header(packed, 0):
+                            continue # MZ False positive, skip
                     return label
     except Exception:
         pass

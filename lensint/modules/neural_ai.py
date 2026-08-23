@@ -51,38 +51,32 @@ class NeuralDeepfakePipeline:
 
     def _load_manifest(self) -> Dict[str, Any]:
         manifest_path = os.path.join(self.model_dir, "manifest.json")
-        if os.path.exists(manifest_path):
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {
-            "model_name": "Generic-ONNX-Deepfake-Detector",
-            "input_size": [224, 224],
-            "mean": [0.485, 0.456, 0.406],
-            "std": [0.229, 0.224, 0.225],
-            "ai_class_index": 1,
-        }
+        if not os.path.exists(manifest_path):
+            raise FileNotFoundError("AI Manifest file (manifest.json) is strictly required to run Neural ONNX inference.")
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     def predict_synthetic_probability(self, pil_img: Image.Image) -> Dict[str, Any]:
         """Predict synthetic generation likelihood using ONNX model or fallback to heuristic anomaly scores."""
         if pil_img is None:
-            return {"synthetic_probability": 0.0, "model_used": "None", "anomalies": []}
+            return {"heuristic_anomaly_score": 0.0, "model_used": "None", "anomalies": []}
 
         # 1. ONNX Model Inference if model file is present
         model_path = os.path.join(self.model_dir, "deepfake_detector.onnx")
         if self.onnx_available and os.path.exists(model_path):
             # If the model is explicitly placed here, we do NOT swallow exceptions. 
-            # If it's corrupted or mismatched with manifest, it should raise.
-            import hashlib
-            
             manifest = self._load_manifest()
             
             # Model Integrity Verification
             expected_sha256 = manifest.get("model_sha256")
-            if expected_sha256:
-                with open(model_path, "rb") as mf:
-                    actual_sha256 = hashlib.sha256(mf.read()).hexdigest()
-                if actual_sha256 != expected_sha256.lower():
-                    raise ValueError(f"Model integrity verification failed: expected {expected_sha256}, got {actual_sha256}")
+            if not expected_sha256:
+                raise ValueError("AI Manifest must strictly contain 'model_sha256' for forensic integrity.")
+            
+            import hashlib
+            with open(model_path, "rb") as mf:
+                actual_sha256 = hashlib.sha256(mf.read()).hexdigest()
+            if actual_sha256 != expected_sha256.lower():
+                raise ValueError(f"Model integrity verification failed: expected {expected_sha256}, got {actual_sha256}")
 
             import onnxruntime as ort
             session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
@@ -97,36 +91,55 @@ class NeuralDeepfakePipeline:
             std = np.array(manifest.get("std", [0.229, 0.224, 0.225]), dtype=np.float32)
             arr = (arr - mean) / std
 
-            arr = np.transpose(arr, (2, 0, 1))  # CHW
-            tensor = np.expand_dims(arr, axis=0)  # NCHW
-
-            input_name = session.get_inputs()[0].name
-            outputs = session.run(None, {input_name: tensor})
+            # Layout handling
+            layout = manifest.get("tensor_layout", "NCHW").upper()
+            if layout == "NCHW":
+                arr = np.transpose(arr, (2, 0, 1))  # CHW
             
+            tensor = np.expand_dims(arr, axis=0)  # batch size 1
+            
+            # Input shape/dtype validation against ONNX session
+            model_inputs = session.get_inputs()
+            input_name = model_inputs[0].name
+            expected_shape = model_inputs[0].shape
+            if expected_shape and len(expected_shape) == 4:
+                # expected_shape might be ['batch_size', 3, 224, 224]
+                if expected_shape[1] not in (3, 'channels', 'C', -1) and isinstance(expected_shape[1], int) and expected_shape[1] != tensor.shape[1]:
+                    raise ValueError(f"ONNX Model shape mismatch. Model expects {expected_shape}, but manifest provided {tensor.shape}")
+            
+            tensor = tensor.astype(np.float32) # Standardize to FP32
+
+            outputs = session.run(None, {input_name: tensor})
             out_arr = np.array(outputs[0][0], dtype=np.float32)
             
             # Output Schema Validation
             expected_classes = manifest.get("expected_classes")
-            if expected_classes and len(out_arr) != expected_classes:
+            if not expected_classes:
+                raise ValueError("AI Manifest must specify 'expected_classes'.")
+            if len(out_arr) != expected_classes:
                 raise ValueError(f"Output schema mismatch: expected {expected_classes} classes, got {len(out_arr)}")
 
             activation = manifest.get("output_activation", "auto").lower()
             class_idx = manifest.get("ai_class_index", 1)
+            
+            if class_idx < 0 or class_idx >= expected_classes:
+                raise IndexError(f"Manifest ai_class_index {class_idx} is out of bounds for {expected_classes} classes.")
 
             if activation == "softmax" or (activation == "auto" and len(out_arr) > 1 and (np.min(out_arr) < 0 or np.max(out_arr) > 1.0)):
                 exp_vals = np.exp(out_arr - np.max(out_arr))
                 probs = exp_vals / np.sum(exp_vals)
-                prob = float(probs[class_idx] if len(probs) > class_idx else probs[0])
-            elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1 and (out_arr[0] < 0 or out_arr[0] > 1.0)):
+                prob = float(probs[class_idx])
+            elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1):
+                if len(out_arr) != 1:
+                    raise ValueError("Sigmoid activation specified but output is not a scalar/single-element array.")
                 val = float(out_arr[0])
                 prob = 1.0 / (1.0 + math.exp(-val))
             else:
-                val = float(out_arr[class_idx] if len(out_arr) > class_idx else out_arr[0])
-                prob = max(0.0, min(1.0, val))
+                prob = max(0.0, min(1.0, float(out_arr[class_idx])))
 
             model_label = f"ONNX Neural Engine ({manifest.get('model_name', os.path.basename(model_path))})"
             return {
-                "synthetic_probability": round(prob * 100.0, 2),
+                "heuristic_anomaly_score": round(prob * 100.0, 2), # Using uniform key for API downstream
                 "model_used": model_label,
                 "anomalies": ["Neural deepfake activation spike"] if prob > 0.6 else [],
             }
@@ -182,7 +195,7 @@ class NeuralDeepfakePipeline:
         final_score = min(100.0, max(0.0, round(heuristic_anomaly_score, 2)))
 
         return {
-            "synthetic_probability": final_score, # Keep key for API compatibility, but semantics changed to heuristic score
+            "heuristic_anomaly_score": final_score,
             "model_used": "Spatial Gradient Curvature Heuristic (Local Algorithm)",
             "anomalies": anomalies if final_score > 40.0 else [],
             "features": {
@@ -205,7 +218,7 @@ def scan_prompt_injections(text_or_metadata: str) -> List[Dict[str, Any]]:
             hits.append({
                 "type": desc,
                 "sample": matches[0] if isinstance(matches[0], str) else text_or_metadata[:60],
-                "severity": "HIGH",
+                "severity": "SUSPICIOUS", # Downgrade to suspicious since this can be benign text in screenshots
             })
 
     return hits

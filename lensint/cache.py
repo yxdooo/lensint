@@ -36,12 +36,15 @@ def get_cached(sha256: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def put_cache(sha256: str, data: Dict[str, Any]) -> None:
-    """Persist analysis result dict to disk cache."""
+def put_cache(key: str, data: Dict[str, Any]) -> None:
+    """Persist analysis result dict to disk cache atomically."""
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with _cache_path(sha256).open("w", encoding="utf-8") as f:
+        target_path = _cache_path(key)
+        temp_path = target_path.with_suffix(".tmp")
+        with temp_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(str(temp_path), str(target_path))
     except Exception:
         pass  # cache writes are best-effort
 

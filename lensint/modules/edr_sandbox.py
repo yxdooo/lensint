@@ -31,8 +31,8 @@ class DirectoryWatcher:
         self.watch_dir = watch_directory
         self.alert_callback = alert_callback
         self.min_risk = min_risk_to_alert
-        # Stores (inode, mtime, size) to prevent race conditions and re-processing
-        self.processed_files: Set[Tuple[int, float, int]] = set()
+        # Stores (inode, mtime, size) -> timestamp to prevent memory leak
+        self.processed_files: Dict[Tuple[int, float, int], float] = {}
         self._running = False
 
     @staticmethod
@@ -59,12 +59,17 @@ class DirectoryWatcher:
         return processes
 
     def _is_file_stable(self, path: str) -> bool:
-        """Check if file is still being written to (simple size check wait)."""
+        """Check if file is still being written to via size and IO locks."""
         try:
             initial_size = os.path.getsize(path)
-            time.sleep(0.1)
+            time.sleep(0.5)
             final_size = os.path.getsize(path)
-            return initial_size == final_size and final_size > 0
+            if initial_size != final_size or final_size == 0:
+                return False
+            # Check for exclusive lock by attempting append access
+            with open(path, "ab"):
+                pass
+            return True
         except OSError:
             return False
 
@@ -74,6 +79,11 @@ class DirectoryWatcher:
         results = []
         if not os.path.exists(self.watch_dir):
             return results
+
+        # Clean up processed_files LRU to prevent memory leak
+        if len(self.processed_files) > 10000:
+            sorted_items = sorted(self.processed_files.items(), key=lambda x: x[1])
+            self.processed_files = dict(sorted_items[2000:])
 
         supported_exts = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
         for root, _, files in os.walk(self.watch_dir):
@@ -90,7 +100,7 @@ class DirectoryWatcher:
                             if not self._is_file_stable(full_path):
                                 continue # Wait for the file to finish writing
                                 
-                            self.processed_files.add(file_fingerprint)
+                            self.processed_files[file_fingerprint] = time.time()
                             
                             analyzer = ImageAnalyzer(full_path, use_cache=True)
                             res = analyzer.analyze()

@@ -45,6 +45,7 @@ class MemoryForensicsEngine:
 
         # 1. Carve PNGs structurally
         png_pos = 0
+        import zlib
         while len(carved_results) < max_images:
             png_pos = raw_memory.find(b"\x89PNG\r\n\x1a\n", png_pos)
             if png_pos == -1:
@@ -53,14 +54,23 @@ class MemoryForensicsEngine:
             cur = png_pos + 8
             valid = True
             while cur < total_len and cur - png_pos < self.max_carve_size:
-                if cur + 8 > total_len:
+                if cur + 12 > total_len:
                     valid = False
                     break
                 length = int.from_bytes(raw_memory[cur : cur + 4], "big")
-                chunk_type = raw_memory[cur + 4 : cur + 8]
-                if length > self.max_carve_size:
+                if length > self.max_carve_size or cur + 12 + length > total_len:
                     valid = False
                     break
+                
+                chunk_type = raw_memory[cur + 4 : cur + 8]
+                chunk_data = raw_memory[cur + 8 : cur + 8 + length]
+                expected_crc = int.from_bytes(raw_memory[cur + 8 + length : cur + 12 + length], "big")
+                
+                calculated_crc = zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF
+                if calculated_crc != expected_crc:
+                    valid = False
+                    break
+
                 cur += 12 + length
                 if chunk_type == b"IEND":
                     break
@@ -78,7 +88,7 @@ class MemoryForensicsEngine:
                                 "size_bytes": len(img_data),
                                 "dimensions": (w, h),
                                 "raw_bytes": img_data,
-                                "source": "Process Memory Heap / Network Buffer",
+                                "source": "Memory Carved Chunk",
                             })
                 except Exception:
                     pass
@@ -91,40 +101,15 @@ class MemoryForensicsEngine:
             if jpg_pos == -1:
                 break
             
-            cur = jpg_pos + 2
-            valid = True
-            while cur < total_len and cur - jpg_pos < self.max_carve_size:
-                if raw_memory[cur] != 0xFF:
-                    valid = False
-                    break
-                marker = raw_memory[cur + 1]
-                if marker == 0xD9: # EOI
-                    cur += 2
-                    break
-                elif marker in (0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0x00, 0xFF):
-                    cur += 2
-                elif marker == 0xDA: # SOS
-                    if cur + 4 > total_len:
-                        valid = False
-                        break
-                    sos_len = int.from_bytes(raw_memory[cur + 2 : cur + 4], "big")
-                    cur += 2 + sos_len
-                    # Skip entropy coded data
-                    while cur < total_len - 1:
-                        if raw_memory[cur] == 0xFF and raw_memory[cur + 1] != 0x00 and not (0xD0 <= raw_memory[cur+1] <= 0xD7):
-                            break
-                        cur += 1
-                else:
-                    if cur + 4 > total_len:
-                        valid = False
-                        break
-                    length = int.from_bytes(raw_memory[cur + 2 : cur + 4], "big")
-                    cur += 2 + length
-
-            if valid and cur <= total_len and raw_memory[cur-2:cur] == b"\xFF\xD9":
-                img_data = raw_memory[jpg_pos : cur]
+            # Since JPEG entropy parsing is highly complex and error-prone in raw python,
+            # we scan for EOI marker and validate via Pillow.
+            eoi_pos = raw_memory.find(b"\xFF\xD9", jpg_pos)
+            if eoi_pos != -1 and (eoi_pos - jpg_pos) < self.max_carve_size:
+                img_data = raw_memory[jpg_pos : eoi_pos + 2]
                 try:
                     with Image.open(io.BytesIO(img_data)) as test_img:
+                        # Verify Pillow actually decoded it by calling load()
+                        test_img.load()
                         w, h = test_img.size
                         if w >= 8 and h >= 8:
                             carved_results.append({
@@ -134,7 +119,7 @@ class MemoryForensicsEngine:
                                 "size_bytes": len(img_data),
                                 "dimensions": (w, h),
                                 "raw_bytes": img_data,
-                                "source": "Browser Cache / Clipboard DIB Surface",
+                                "source": "Memory Carved Chunk",
                             })
                 except Exception:
                     pass
@@ -161,7 +146,7 @@ class MemoryForensicsEngine:
                                 "size_bytes": len(img_data),
                                 "dimensions": (w, h),
                                 "raw_bytes": img_data,
-                                "source": "GDI DIB / Screen Buffer Allocation",
+                                "source": "Memory Carved Chunk",
                             })
             except Exception:
                 pass
@@ -180,6 +165,7 @@ class MemoryForensicsEngine:
             raise FileNotFoundError(f"Memory dump file not found: {dump_path}")
 
         all_carved = []
+        seen_offsets = set()
         with open(dump_path, "rb") as f:
             overlap = 1024 * 1024  # 1MB overlap between chunks
             buffer = b""
@@ -192,9 +178,13 @@ class MemoryForensicsEngine:
                 combined = buffer + new_chunk
                 carved = self.carve_memory_stream(combined, max_images=max_images - len(all_carved))
                 for c in carved:
-                    c["offset"] += offset_base
-                    c["offset_hex"] = hex(c["offset"])
-                    all_carved.append(c)
+                    absolute_offset = c["offset"] + offset_base
+                    if absolute_offset not in seen_offsets:
+                        c["offset"] = absolute_offset
+                        c["offset_hex"] = hex(absolute_offset)
+                        all_carved.append(c)
+                        seen_offsets.add(absolute_offset)
+                
                 buffer = combined[-overlap:] if len(combined) > overlap else combined
                 offset_base += len(new_chunk)
 

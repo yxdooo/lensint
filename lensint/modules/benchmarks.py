@@ -103,7 +103,6 @@ class DatasetBenchmarkRunner:
                 for f in files:
                     if os.path.splitext(f)[1].lower() in valid_exts:
                         all_files.append(os.path.join(root, f))
-            # Sort with fixed seed to ensure deterministic sampling
             return sorted(all_files)
 
         # 1. Evaluate clean images (Ground truth = 0)
@@ -116,7 +115,7 @@ class DatasetBenchmarkRunner:
                     score = float(self.detector_fn(path))
                     scores.append((score, 0))
                 except Exception as e:
-                    errors.append({"file": os.path.basename(path), "class": "clean", "error": str(e)})
+                    errors.append({"file": os.path.relpath(path, clean_dir), "class": "clean", "error": str(e)})
 
         # 2. Evaluate tampered images (Ground truth = 1)
         if os.path.exists(tampered_dir):
@@ -128,7 +127,7 @@ class DatasetBenchmarkRunner:
                     score = float(self.detector_fn(path))
                     scores.append((score, 1))
                 except Exception as e:
-                    errors.append({"file": os.path.basename(path), "class": "tampered", "error": str(e)})
+                    errors.append({"file": os.path.relpath(path, tampered_dir), "class": "tampered", "error": str(e)})
 
         total_samples = len(scores)
         total_errors = len(errors)
@@ -160,12 +159,15 @@ class DatasetBenchmarkRunner:
         auc = self._calculate_auc(scores)
         auc_ci_lower, auc_ci_upper = self._calculate_auc_ci(auc, total_pos, total_neg)
 
-        # Dynamic Optimal Threshold Search via Youden's J Statistic with Train/Test Split
+        # Dynamic Optimal Threshold Search via Youden's J Statistic with STRATIFIED Train/Test Split
         random.seed(42)
-        random.shuffle(scores)
-        split_idx = int(len(scores) * 0.5)
-        train_scores = scores[:split_idx]
-        test_scores = scores[split_idx:]
+        pos_scores = [x for x in scores if x[1] == 1]
+        neg_scores = [x for x in scores if x[1] == 0]
+        random.shuffle(pos_scores)
+        random.shuffle(neg_scores)
+        
+        train_scores = pos_scores[:int(len(pos_scores)*0.5)] + neg_scores[:int(len(neg_scores)*0.5)]
+        test_scores = pos_scores[int(len(pos_scores)*0.5):] + neg_scores[int(len(neg_scores)*0.5):]
         
         if len(set(lbl for _, lbl in train_scores)) < 2 or len(set(lbl for _, lbl in test_scores)) < 2:
             train_scores = scores
@@ -204,6 +206,7 @@ class DatasetBenchmarkRunner:
             "optimal_youden_threshold": round(optimal_th, 2),
             "unbiased_youden_j_index": round(unbiased_j, 4),
             "sample_errors": errors[:5],
+            "ci_disclaimer": "Hanley-McNeil CI used. May not be robust for highly imbalanced or N < 50 datasets.",
         }
 
     @staticmethod
@@ -397,6 +400,7 @@ class BayesianForensicFusionEngine:
             "final_log_odds": round(log_odds, 3),
             "contributing_indicators": indicator_weights,
             "correlation_groups_activated": list(seen_correlation_groups.keys()),
+            "bayesian_disclaimer": "Fusion uses literature-derived TPR/FPR priors as likelihood ratios. Domain mismatch (dataset differences) may affect empirical calibration."
         }
 
         return calibrated_score, verdict, metrics

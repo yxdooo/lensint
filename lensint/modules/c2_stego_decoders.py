@@ -71,11 +71,9 @@ class C2StegoDetector:
 
                 result["total_chunks"] += 1
 
-                # CRC32 validation & covert bit accumulation
+                # CRC32 validation
                 calculated_crc = zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF
                 if calculated_crc != expected_crc:
-                    diff = (expected_crc ^ calculated_crc) & 0xFF
-                    crc_covert_bits.append(diff)
                     result["crc_tampered_chunks"].append({
                         "chunk_type": chunk_type.decode("latin-1", errors="ignore"),
                         "offset": pos,
@@ -83,7 +81,7 @@ class C2StegoDetector:
                         "calculated_crc": hex(calculated_crc),
                     })
                     result["findings"].append(
-                        f"Anomaly / Suspicious: CRC32 mismatch in {chunk_type.decode('latin-1', errors='ignore')} chunk at offset {hex(pos)}."
+                        f"Anomaly / Suspicious: CRC32 mismatch in {chunk_type.decode('latin-1', errors='ignore')} chunk at offset {hex(pos)}. (Could be stego, network corruption, or faulty encoder)"
                     )
 
                 # Check for non-standard custom chunk names
@@ -103,6 +101,7 @@ class C2StegoDetector:
 
                 # zTXt / iTXt compressed metadata inspection
                 if chunk_type in (b"zTXt", b"iTXt"):
+                    keyword = "UNKNOWN"
                     try:
                         null_idx = chunk_data.find(b"\x00")
                         if null_idx != -1:
@@ -118,31 +117,14 @@ class C2StegoDetector:
                                 result["findings"].append(
                                     f"Compressed {chunk_type.decode()} tunnel extracted (Keyword: '{keyword}', Size: {len(decompressed)} B)."
                                 )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        result["findings"].append(f"Parse failed: Could not decompress {chunk_type.decode()} chunk (Keyword: '{keyword}'). Error: {str(e)}")
 
                 pos += 12 + length
                 if chunk_type == b"IEND":
                     break
             except Exception:
                 break
-
-        # Check for CRC32 covert exfiltration sequence
-        if len(crc_covert_bits) >= 4:
-            covert_bytes = bytes(crc_covert_bits)
-            result["covert_data_extracted"].append({
-                "source": "PNG CRC32 Parity Covert Stream",
-                "bytes": covert_bytes[:64].hex(" "),
-                "size": len(covert_bytes),
-            })
-            result["findings"].append(f"Extracted {len(covert_bytes)} covert bytes modulated in CRC32 chunk parity fields.")
-
-        # IDAT size anomaly check
-        if len(idat_sizes) > 1:
-            small_idats = [s for s in idat_sizes[:-1] if s < 1024]
-            if len(small_idats) > 2:
-                result["idat_size_anomalies"] = True
-                result["findings"].append(f"Anomaly / Suspicious: IDAT fragmentation ({len(small_idats)} abnormally small IDAT chunks detected).")
 
         return result
 
@@ -157,20 +139,20 @@ class C2StegoDetector:
                     "tool": name,
                     "offset": pos,
                     "offset_hex": hex(pos),
-                    "confidence": "HIGH",
+                    "confidence": "SUSPICIOUS",
                 })
 
-        # JSteg zero-coefficient modulation check
+        # Heuristic check for 'jsteg' string in scan data (not proof, just suspicious)
         if raw_bytes.startswith(b"\xFF\xD8\xFF"):
             sos_pos = raw_bytes.find(b"\xFF\xDA")
             if sos_pos != -1:
                 scan_data = raw_bytes[sos_pos + 2 :]
                 if b"jsteg" in scan_data.lower():
                     detected.append({
-                        "tool": "JSteg DCT Carrier",
+                        "tool": "Suspicious string 'jsteg' in scan data",
                         "offset": sos_pos,
                         "offset_hex": hex(sos_pos),
-                        "confidence": "CONFIRMED",
+                        "confidence": "SUSPICIOUS",
                     })
 
         return detected

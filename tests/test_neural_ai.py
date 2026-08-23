@@ -19,6 +19,30 @@ class TestNeuralAIModule(unittest.TestCase):
         self.assertGreaterEqual(len(hits), 1)
         self.assertIn("Prompt Override", hits[0]["type"])
 
+    def test_onnx_manifest_validation(self):
+        import os
+        import json
+        import tempfile
+        
+        tmpdir = tempfile.mkdtemp(prefix="lensint_ai_")
+        manifest_path = os.path.join(tmpdir, "manifest.json")
+        onnx_path = os.path.join(tmpdir, "deepfake_detector.onnx")
+        
+        with open(onnx_path, "wb") as f:
+            f.write(b"FAKE_ONNX_MODEL_BYTES")
+            
+        with open(manifest_path, "w") as f:
+            json.dump({
+                "model_sha256": "abcdef123456",
+                "expected_classes": 2
+            }, f)
+            
+        pipeline = NeuralDeepfakePipeline(model_dir=tmpdir)
+        pipeline.onnx_available = True
+        
+        # It should fall back to feature extractor and log a warning when integrity fails,
+        res = pipeline.predict_synthetic_probability(self.test_img)
+        self.assertIn("Spatial Gradient Curvature", res["model_used"])
 
 if __name__ == "__main__":
     unittest.main()

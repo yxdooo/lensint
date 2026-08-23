@@ -305,6 +305,18 @@ class C2StegoDetector:
                     "status": "CARVED_SUCCESSFULLY",
                 }
 
+        # Check for ASCII plaintext payload
+        check_len = min(128, len(final_bytes))
+        printable_count = sum(1 for b in final_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
+        if check_len >= 4 and printable_count >= int(check_len * 0.85):
+            return {
+                "extracted_format": "Plaintext C2 / Secret String (F5)",
+                "extension": ".txt",
+                "size_bytes": len(final_bytes),
+                "preview_text": final_bytes[:100].decode("latin-1", errors="ignore"),
+                "status": "CARVED_SUCCESSFULLY",
+            }
+
         return None
 
     @staticmethod
@@ -346,5 +358,17 @@ class C2StegoDetector:
                     "size_bytes": len(final_bytes),
                     "status": "CARVED_SUCCESSFULLY",
                 }
+                
+        # Check for ASCII plaintext payload
+        check_len = min(128, len(final_bytes))
+        printable_count = sum(1 for b in final_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
+        if check_len >= 4 and printable_count >= int(check_len * 0.85):
+            return {
+                "extracted_format": "Plaintext C2 / Secret String (OutGuess)",
+                "extension": ".txt",
+                "size_bytes": len(final_bytes),
+                "preview_text": final_bytes[:100].decode("latin-1", errors="ignore"),
+                "status": "CARVED_SUCCESSFULLY",
+            }
 
         return None

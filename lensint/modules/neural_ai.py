@@ -75,7 +75,18 @@ class NeuralDeepfakePipeline:
         if self.onnx_available and os.path.exists(model_path):
             try:
                 import onnxruntime as ort
+                import hashlib
+                
                 manifest = self._load_manifest()
+                
+                # Model Integrity Verification
+                expected_sha256 = manifest.get("model_sha256")
+                if expected_sha256:
+                    with open(model_path, "rb") as mf:
+                        actual_sha256 = hashlib.sha256(mf.read()).hexdigest()
+                    if actual_sha256 != expected_sha256.lower():
+                        raise ValueError(f"Model integrity verification failed: expected {expected_sha256}, got {actual_sha256}")
+
                 session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
                 
                 # Preprocessing from manifest specs
@@ -95,6 +106,12 @@ class NeuralDeepfakePipeline:
                 outputs = session.run(None, {input_name: tensor})
                 
                 out_arr = np.array(outputs[0][0], dtype=np.float32)
+                
+                # Output Schema Validation
+                expected_classes = manifest.get("expected_classes")
+                if expected_classes and len(out_arr) != expected_classes:
+                    raise ValueError(f"Output schema mismatch: expected {expected_classes} classes, got {len(out_arr)}")
+
                 activation = manifest.get("output_activation", "auto").lower()
                 class_idx = manifest.get("ai_class_index", 1)
 

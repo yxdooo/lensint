@@ -1,14 +1,15 @@
 """Unit tests for Scientific Benchmark Validation and C2 Stego Matrix Decoders."""
 import unittest
-from lensint.modules.benchmarks import BayesianForensicFusionEngine, FORENSIC_BENCHMARKS
+from lensint.modules.benchmarks import BayesianForensicFusionEngine, FORENSIC_BENCHMARKS, LITERATURE_BASELINE_BENCHMARKS
 from lensint.modules.c2_stego_decoders import C2StegoDetector
 
 
 class TestBenchmarksAndDecoders(unittest.TestCase):
-    def test_benchmark_dataset_metrics(self):
-        self.assertIn("tampering_ela", FORENSIC_BENCHMARKS)
-        self.assertIn("copy_move_cloning", FORENSIC_BENCHMARKS)
-        self.assertGreater(FORENSIC_BENCHMARKS["tampering_ela"]["roc_auc"], 0.90)
+    def test_literature_baseline_exists(self):
+        self.assertIn("tampering_ela", LITERATURE_BASELINE_BENCHMARKS)
+        self.assertIn("copy_move_cloning", LITERATURE_BASELINE_BENCHMARKS)
+        self.assertGreater(LITERATURE_BASELINE_BENCHMARKS["tampering_ela"]["roc_auc"], 0.90)
+        self.assertIn("source", LITERATURE_BASELINE_BENCHMARKS["tampering_ela"])
 
     def test_bayesian_fusion_clean_vs_tampered(self):
         # Clean image inputs
@@ -43,16 +44,24 @@ class TestBenchmarksAndDecoders(unittest.TestCase):
         self.assertIn("ela_disparity", metrics_tamp["contributing_indicators"])
 
     def test_f5_matrix_embedding_decoder(self):
-        fake_jpeg = b"\xFF\xD8\xFF\xDA\x00\x08\x01\x00\x00?\x00" + b"\x01\x02\x03\x04\x05\x06\x07" * 20 + b"\xFF\xD9"
-        # Run F5 matrix decoder
+        import base64
+        # b"HELLO LENSINT" encoded with F5 syndrome matrix embedding (k=3)
+        b64_f5 = "/9j/2gAAAgMCAgICAgIDAgICAgICAgICAgICAgICAwICAgIDAgICAgICAgICAwICAwICAgICAgICAgMCAgICAwICAgICAgIDAgICAgICAgICAgICAgIDAgICAgICAgICAwICAgMCAgICAgIDAgICAgICAgICAgIDAgICAgICAgMCAgICAgICAgICAgICAgMCAgICAwICAgICAgICAgMCAgMCAgICAgICAgICAgMCAgMCAgICAgICAgMCAgICAgICAgMCAgICAwICAgICAgMCAgICAgICAwICAwICAgICAgICAgICAwICAwICAgICAgICAgMCAgICAgICAgI="
+        fake_jpeg = base64.b64decode(b64_f5)
         res = C2StegoDetector.extract_f5_matrix_payload(fake_jpeg, k=3)
-        # Should execute safely without error
-        self.assertTrue(res is None or isinstance(res, dict))
+        self.assertIsNotNone(res)
+        self.assertIn("HELLO LENSINT", res["preview_text"])
+        self.assertEqual(res["extracted_format"], "Plaintext C2 / Secret String (F5)")
 
     def test_outguess_decoder(self):
-        fake_jpeg = b"\xFF\xD8\xFF\xDA\x00\x08\x01\x00\x00?\x00" + b"\x41\x42\x43\x44" * 40 + b"\xFF\xD9"
-        res = C2StegoDetector.extract_outguess_payload(fake_jpeg, seed=1234)
-        self.assertTrue(res is None or isinstance(res, dict))
+        import base64
+        # b"HELLO LENSINT   " encoded with OutGuess PRNG LCG (seed=0x1337)
+        b64_outguess = "/9j/2gAAAAAAAAAAAAAAAAEAAAAAAQAAAAAAAQABAAEBAQEAAAEAAAEAAAAAAAAAAQAAAAAAAQEAAQAAAAEAAAABAAAAAQAAAAABAAABAAABAQAAAAEAAAABAAAAAQEAAQAAAAAAAQABAQAAAAEAAQAAAAAAAAABAAEBAAABAQABAQABAAEAAQABAQAAAQAA"
+        fake_jpeg = base64.b64decode(b64_outguess)
+        res = C2StegoDetector.extract_outguess_payload(fake_jpeg, seed=0x1337)
+        self.assertIsNotNone(res)
+        self.assertIn("HELLO LENSINT", res["preview_text"])
+        self.assertEqual(res["extracted_format"], "Plaintext C2 / Secret String (OutGuess)")
 
     def test_dataset_benchmark_runner_youden_threshold(self):
         import tempfile
@@ -81,6 +90,7 @@ class TestBenchmarksAndDecoders(unittest.TestCase):
         self.assertEqual(metrics["total_failed"], 0)
         self.assertEqual(metrics["roc_auc"], 1.0)
         self.assertIn("optimal_youden_threshold", metrics)
+        self.assertEqual(metrics["optimal_youden_threshold"], 50.0)
         self.assertGreaterEqual(metrics["max_youden_j_index"], 0.99)
 
 

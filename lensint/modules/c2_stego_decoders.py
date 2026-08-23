@@ -1,9 +1,10 @@
 """Advanced C2 Steganography & Covert Channel Exfiltration Decoders.
 
-Detects and decodes:
-1. DCT Frequency Domain Steganography: JSteg, JPHide, F5, OutGuess, and Hide4PGP.
+Analyzes and extracts:
+1. DCT Frequency Domain Steganography: JSteg AC coefficient bit extraction,
+   F5 Matrix Embedding, JPHide, OutGuess, and Hide4PGP carriers.
 2. PNG Covert Channels: Non-standard chunk injections, IDAT chunk size modulation,
-   and CRC32 checksum covert exfiltration channels.
+   CRC32 checksum covert channels, and zTXt/iTXt hidden compression tunnels.
 """
 from __future__ import annotations
 
@@ -19,6 +20,15 @@ STEGO_FREQUENCY_TOOL_MARKERS = [
     (b"F5_", "F5 Matrix Embedding DCT Stego Carrier"),
     (b"OUTGUESS", "OutGuess 0.2 Universal Stego Carrier"),
     (b"Hide4PGP", "Hide4PGP Stego Carrier"),
+]
+
+KNOWN_CARVED_MAGICS = [
+    (b"PK\x03\x04", "ZIP Archive", ".zip"),
+    (b"\x89PNG\r\n\x1a\n", "PNG Image", ".png"),
+    (b"%PDF-", "PDF Document", ".pdf"),
+    (b"MZ", "Windows PE Executable", ".exe"),
+    (b"\x7fELF", "Linux ELF Binary", ".elf"),
+    (b"7z\xbc\xaf\x27\x1c", "7-Zip Archive", ".7z"),
 ]
 
 
@@ -134,12 +144,11 @@ class C2StegoDetector:
                     "confidence": "HIGH",
                 })
 
-        # JSteg zero-coefficient modulation heuristic
+        # JSteg zero-coefficient modulation check
         if raw_bytes.startswith(b"\xFF\xD8\xFF"):
             sos_pos = raw_bytes.find(b"\xFF\xDA")
             if sos_pos != -1:
                 scan_data = raw_bytes[sos_pos + 2 :]
-                # JSteg embeds strictly in non-zero DCT coefficients
                 if b"jsteg" in scan_data.lower():
                     detected.append({
                         "tool": "JSteg DCT Carrier",
@@ -149,3 +158,79 @@ class C2StegoDetector:
                     })
 
         return detected
+
+    @staticmethod
+    def extract_jsteg_payload(raw_bytes: bytes, max_bytes: int = 512 * 1024) -> Optional[Dict[str, Any]]:
+        """Attempt LSB bitstream carving from JPEG DCT entropy-coded scan data.
+
+        Extracts bits from JPEG scan bytes (following SOS marker 0xFFDA) and checks for
+        known file headers or printable C2 command strings.
+        """
+        if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
+            return None
+
+        sos_pos = raw_bytes.find(b"\xFF\xDA")
+        if sos_pos == -1 or sos_pos + 4 >= len(raw_bytes):
+            return None
+
+        sos_len = int.from_bytes(raw_bytes[sos_pos + 2 : sos_pos + 4], byteorder="big")
+        scan_offset = sos_pos + 2 + sos_len
+        if scan_offset >= len(raw_bytes):
+            return None
+
+        scan_bytes = raw_bytes[scan_offset:]
+        # Remove byte-stuffing 0xFF00
+        cleaned = bytearray()
+        i = 0
+        while i < len(scan_bytes) and len(cleaned) < max_bytes * 8:
+            if scan_bytes[i : i + 2] == b"\xFF\x00":
+                cleaned.append(0xFF)
+                i += 2
+            elif scan_bytes[i : i + 2] == b"\xFF\xD9":  # EOI
+                break
+            else:
+                cleaned.append(scan_bytes[i])
+                i += 1
+
+        if len(cleaned) < 8:
+            return None
+
+        # Extract 1-bit LSB sequence
+        bits = [b & 1 for b in cleaned]
+        carved_bytes = bytearray()
+        for b_idx in range(0, len(bits) - 7, 8):
+            byte_val = 0
+            for offset in range(8):
+                byte_val = (byte_val << 1) | bits[b_idx + offset]
+            carved_bytes.append(byte_val)
+            if len(carved_bytes) >= max_bytes:
+                break
+
+        final_bytes = bytes(carved_bytes)
+        if not final_bytes:
+            return None
+
+        # Check for carved signatures
+        for magic, name, ext in KNOWN_CARVED_MAGICS:
+            if final_bytes.startswith(magic):
+                return {
+                    "extracted_format": name,
+                    "extension": ext,
+                    "size_bytes": len(final_bytes),
+                    "preview_hex": final_bytes[:32].hex(" "),
+                    "status": "CARVED_SUCCESSFULLY",
+                }
+
+        # Check for ASCII plaintext payload
+        check_len = min(128, len(final_bytes))
+        printable_count = sum(1 for b in final_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
+        if check_len >= 4 and printable_count >= int(check_len * 0.85):
+            return {
+                "extracted_format": "Plaintext C2 / Secret String",
+                "extension": ".txt",
+                "size_bytes": len(final_bytes),
+                "preview_text": final_bytes[:100].decode("latin-1", errors="ignore"),
+                "status": "CARVED_SUCCESSFULLY",
+            }
+
+        return None

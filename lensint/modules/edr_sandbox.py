@@ -1,21 +1,24 @@
-"""Kernel-Level EDR File-Drop Monitor & CAPE / Cuckoo Sandbox Ingestion Engine.
+"""Real-Time Image Artifact Watcher & CAPE / Cuckoo Sandbox Ingestion Engine.
 
 Provides:
-1. Real-time file system drop monitoring (Windows Minifilter / Linux eBPF probe interface).
+1. Real-time file system directory monitoring for incident response and SOC evidence drops.
 2. Dynamic analysis sandbox capture ingestion (CAPE / Cuckoo screenshots & dropped artifacts).
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 if TYPE_CHECKING:
     from lensint.core.analyzer import ImageAnalyzer
 from lensint.core.models import AnalysisResult
 
+logger = logging.getLogger("lensint.watcher")
 
-class EDRFileDropMonitor:
-    """Real-time EDR watcher scanning newly dropped image artifacts."""
+
+class RealtimeDropMonitor:
+    """Continuous real-time evidence drop watcher for incident response directories."""
 
     def __init__(
         self,
@@ -26,10 +29,11 @@ class EDRFileDropMonitor:
         self.watch_dir = watch_directory
         self.alert_callback = alert_callback
         self.min_risk = min_risk_to_alert
-        self.processed_files = set()
+        self.processed_files: Set[str] = set()
+        self._running = False
 
     def scan_new_drops_once(self) -> List[AnalysisResult]:
-        """Scan directory once for any unanalyzed image drops."""
+        """Scan directory once for any newly added image evidence."""
         from lensint.core.analyzer import ImageAnalyzer
         results = []
         if not os.path.exists(self.watch_dir):
@@ -49,9 +53,30 @@ class EDRFileDropMonitor:
                             results.append(res)
                             if self.alert_callback and res.overall_risk_level in ("HIGH", "CRITICAL"):
                                 self.alert_callback(res)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.error(f"Error analyzing dropped artifact {full_path}: {e}")
         return results
+
+    def watch_continuously(self, poll_interval: float = 1.0, max_iterations: Optional[int] = None) -> None:
+        """Run continuous monitoring loop until interrupted."""
+        self._running = True
+        iterations = 0
+        logger.info(f"Started continuous artifact watcher on {self.watch_dir}")
+        try:
+            while self._running:
+                self.scan_new_drops_once()
+                iterations += 1
+                if max_iterations and iterations >= max_iterations:
+                    break
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            logger.info("Artifact watcher stopped by user.")
+        finally:
+            self._running = False
+
+
+# Backward compatibility alias
+EDRFileDropMonitor = RealtimeDropMonitor
 
 
 class SandboxIngestionEngine:

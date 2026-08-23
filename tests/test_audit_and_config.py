@@ -55,6 +55,24 @@ class TestAuditAndConfig(unittest.TestCase):
         entry_tampered["forensic_verdict"]["risk_score"] = 999.9
         self.assertFalse(ForensicAuditLogger.verify_audit_record(entry_tampered))
 
+    def test_audit_chain_hash_linking(self):
+        custom_log = os.path.join(self.tmp_dir, "chained_ledger.jsonl")
+        logger = ForensicAuditLogger()
+        
+        # Record 1 (Genesis)
+        e1 = logger.record_analysis(self.result, case_id="CASE-1", custom_log_path=custom_log)
+        self.assertEqual(e1["previous_record_seal"], "0" * 64)
+        
+        # Record 2 (Chained to 1)
+        e2 = logger.record_analysis(self.result, case_id="CASE-2", custom_log_path=custom_log)
+        self.assertEqual(e2["previous_record_seal"], e1["audit_seal_sha256"])
+        
+        # Verify complete chain
+        valid, count, err = ForensicAuditLogger.verify_audit_chain(custom_log)
+        self.assertTrue(valid)
+        self.assertEqual(count, 2)
+        self.assertIsNone(err)
+
 
 if __name__ == "__main__":
     unittest.main()

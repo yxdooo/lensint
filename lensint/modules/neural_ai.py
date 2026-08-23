@@ -59,13 +59,13 @@ class NeuralDeepfakePipeline:
                 prob = float(outputs[0][0][1]) if len(outputs[0][0]) > 1 else float(outputs[0][0][0])
                 return {
                     "synthetic_probability": round(prob * 100.0, 2),
-                    "model_used": "TruFor-ONNX Neural Engine",
+                    "model_used": f"ONNX Neural Classifier ({os.path.basename(model_path)})",
                     "anomalies": ["Neural spectral weight activation spike"] if prob > 0.6 else [],
                 }
             except Exception:
                 pass
 
-        # High-precision Neural Heuristic fallback (Spatial Gradient Curvature)
+        # High-precision Local Heuristic fallback (Spatial Gradient Curvature)
         arr = np.array(pil_img.convert("RGB"), dtype=np.float32)
         gy, gx = np.gradient(arr[:, :, 1])
         grad_norm = np.sqrt(gx**2 + gy**2)
@@ -78,7 +78,7 @@ class NeuralDeepfakePipeline:
 
         return {
             "synthetic_probability": round(synthetic_heuristic, 2),
-            "model_used": "Neural Curvature Gradient Analyzer (Local)",
+            "model_used": "Spatial Gradient Curvature Heuristic (Local Algorithm)",
             "anomalies": ["Synthetic gradient uniformity anomaly"] if synthetic_heuristic > 50.0 else [],
         }
 

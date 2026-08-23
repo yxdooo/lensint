@@ -216,6 +216,7 @@ class MalwareReport:
     is_polyglot: bool = False
     polyglot_types: List[str] = field(default_factory=list)
     webshell_detected: bool = False
+    shellcode_detected: bool = False
     threat_signatures: List[str] = field(default_factory=list)
     high_entropy_sections: List[Dict[str, Any]] = field(default_factory=list)
     packed_payload_detected: bool = False

@@ -180,6 +180,51 @@ def perform_rs_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
         return False, 0.0
 
 
+def perform_chi_square_steganalysis(arr: np.ndarray) -> Tuple[bool, float]:
+    """Perform Westfeld's Chi-Square (χ²) Steganalysis on Pairs of Values (PoVs).
+    
+    In natural images, adjacent even/odd histogram pairs (2k, 2k+1) have differing counts.
+    Sequential LSB embedding equalizes these frequencies towards their mean.
+    
+    Returns:
+        (stego_detected: bool, chi_square_p_value: float)
+    """
+    try:
+        if len(arr.shape) == 3:
+            channel = arr[:, :, 1].flatten()
+        else:
+            channel = arr.flatten()
+
+        if len(channel) < 2048:
+            return False, 0.0
+
+        counts = np.bincount(channel, minlength=256)
+        chi_square = 0.0
+        degrees_of_freedom = 0
+
+        for k in range(0, 256, 2):
+            h_even = counts[k]
+            h_odd = counts[k + 1]
+            e_k = (h_even + h_odd) / 2.0
+            if e_k > 5:
+                chi_square += ((h_even - e_k) ** 2) / e_k
+                degrees_of_freedom += 1
+
+        if degrees_of_freedom < 10:
+            return False, 0.0
+
+        # Normal approximation for Chi-Square distribution p-value
+        z = (chi_square - degrees_of_freedom) / np.sqrt(2.0 * degrees_of_freedom)
+        # When embedding occurs, chi_square is very small (z is strongly negative)
+        p_equalized = float(0.5 * (1.0 - math.erf(z / math.sqrt(2.0))))
+        
+        # When p_equalized is high (> 0.95), LSB PoVs have been artificially flattened
+        is_stego = p_equalized >= 0.95 and z < -2.0
+        return is_stego, round(p_equalized, 4)
+    except Exception:
+        return False, 0.0
+
+
 def scan_stego_tool_signatures(raw_bytes: bytes) -> List[str]:
     """Scan raw image bytes for specific steganography tool signatures."""
     detected = []
@@ -252,6 +297,13 @@ def analyze_stego(raw_bytes: bytes, pil_img: Optional[Image.Image], generate_vis
             if rs_detected:
                 report.findings.append(
                     f"RS Steganalysis alert: Non-natural LSB distribution detected (Estimated embedding capacity used: {int(rs_rate*100)}%)."
+                )
+
+            # Chi-Square (χ²) Steganalysis
+            chi_detected, chi_p = perform_chi_square_steganalysis(arr)
+            if chi_detected:
+                report.findings.append(
+                    f"Chi-Square (χ²) Steganalysis alert: PoV frequency equalization detected (Confidence: {int(chi_p * 100)}%)."
                 )
 
             payload_type = extract_lsb_hidden_payload(pil_img)

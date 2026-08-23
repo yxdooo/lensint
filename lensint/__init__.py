@@ -2,7 +2,7 @@
 LENSINT - Image Forensics, AI Detection & Threat Intelligence Framework
 """
 
-__version__ = "2.0.0"
+__version__ = "3.5.0"
 __author__ = "Lensint Security Team"
 
 from lensint.core.analyzer import ImageAnalyzer

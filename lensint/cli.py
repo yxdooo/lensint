@@ -190,13 +190,20 @@ def main(args_list: List[str] = None) -> int:
             console.print(f"  [{idx+1}] Offset: {c['offset_hex']} | Format: {c['format']} | Size: {c['size_bytes']} B | Dims: {c['dimensions']} | Source: {c['source']}")
         return 0
 
-    # 2. EDR Real-Time Drop Watcher
+    # 2. Real-Time Directory Artifact Watcher
     if args.watch_dir:
-        from lensint.modules.edr_sandbox import EDRFileDropMonitor
-        console.print(f"[bold cyan]Starting EDR Real-Time Monitor on:[/bold cyan] {args.watch_dir} (Press Ctrl+C to stop)...")
-        monitor = EDRFileDropMonitor(args.watch_dir, alert_callback=lambda res: console.print(f"[bold red]🚨 EDR CRITICAL ALERT:[/bold red] {res.integrity.file_name} -> {res.overall_risk_level} (Score: {res.overall_risk_score})"))
-        monitor.scan_new_drops_once()
-        console.print("[green]Initial scan complete. Watcher active.[/green]")
+        from lensint.modules.edr_sandbox import RealtimeDropMonitor
+        console.print(f"[bold cyan]Starting Real-Time Artifact Watcher on:[/bold cyan] {args.watch_dir} (Press Ctrl+C to stop)...")
+        monitor = RealtimeDropMonitor(
+            args.watch_dir,
+            alert_callback=lambda res: console.print(
+                f"[bold red]CRITICAL ALERT:[/bold red] {res.integrity.file_name} -> {res.overall_risk_level} (Score: {res.overall_risk_score})"
+            ),
+        )
+        try:
+            monitor.watch_continuously(poll_interval=1.0)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Watcher stopped by analyst.[/yellow]")
         return 0
 
     # 3. Sandbox Ingestion

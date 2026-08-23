@@ -343,7 +343,7 @@ class BayesianForensicFusionEngine:
         confirmed_payload: bool = False,
         c2_stego_detected: bool = False,
         prompt_injection: bool = False,
-        prior_probability: float = 0.20,
+        prior_probability: float = 0.10,
     ) -> Tuple[float, str, Dict[str, Any]]:
         """Calculate posterior risk with correlation attenuation and context priors."""
         p0 = max(0.01, min(0.99, float(prior_probability)))

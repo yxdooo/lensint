@@ -185,7 +185,9 @@ class TestLensintV2Forensics(unittest.TestCase):
         res = ImageAnalyzer(p).analyze()
         self.assertTrue(res.integrity.is_screenshot)
         self.assertEqual(res.overall_risk_level, "CLEAN")
-        self.assertEqual(res.overall_risk_score, 0.0)
+        # Bayesian Fusion always returns at least the prior probability as a baseline score.
+        # At prior=0.10, clean images score ~10.0 which is below the LOW threshold (15.0).
+        self.assertLessEqual(res.overall_risk_score, 15.0)
 
     def test_09_stix_threat_bundle_export(self):
         from lensint.reporters.stix_rep import export_stix_report, render_stix_report

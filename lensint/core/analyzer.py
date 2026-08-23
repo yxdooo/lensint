@@ -106,7 +106,7 @@ class ImageAnalyzer:
             except Exception:
                 model_status = str(os.path.getmtime(model_manifest))
             
-        cache_schema_ver = "v2"
+        cache_schema_ver = "v3"
         cache_key = f"{result.integrity.sha256}_{version_str}_{cache_schema_ver}_ela{self.ela_quality}_len{self.min_string_len}_vis{int(self.generate_visuals)}_geo{int(self.perform_geolookup)}_{model_status}"
 
         if self.use_cache:
@@ -204,7 +204,7 @@ class ImageAnalyzer:
 
         self._calculate_verdict(result)
         result.analysis_duration_seconds = time.monotonic() - start_time
-        if self.use_cache:
+        if self.use_cache and result.overall_risk_level != "ANALYSIS_ERROR":
             put_cache(cache_key, result.to_dict())
         return result
 
@@ -303,41 +303,41 @@ class ImageAnalyzer:
             first_red = result.ocr.sensitive_findings[0]["redacted"]
             findings.append(f"Confidential Data Leak: {leak_count} secret(s) discovered including {first_type} ({first_red}).")
 
-        try:
-            # Bayesian Log-Odds Fusion (Uses literature-derived Likelihood Ratios)
-            from lensint.modules.benchmarks import BayesianForensicFusionEngine
-            
-            has_c2_stego = any("C2 Stego" in f for f in result.stego.findings)
-            has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
-            
-            calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
-                ela_score=result.tampering.ela_difference_max,
-                copy_move_detected=result.tampering.copy_move_detected,
-                dqt_anomaly=result.tampering.dqt_found,
-                cfa_anomaly=result.tampering.cfa_tampering_detected,
-                fft_ai_score=result.ai_detection.fft_spectral_score,
-                rs_stego_detected=result.stego.rs_steganalysis_detected,
-                chi_square_detected=result.stego.lsb_stego_detected,
-                metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
-                malware_threat=result.malware.has_threats,
-                confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
-                c2_stego_detected=has_c2_stego,
-                prompt_injection=has_prompt_injection
-            )
-            result.overall_risk_score = calibrated_score
-            result.overall_risk_level = calibrated_verdict
-            
-            # Elevate explicitly if extreme threats bypass log-odds mapping limits
-            if result.malware.has_threats or result.ocr.sensitive_findings:
-                result.overall_risk_level = "CRITICAL"
-                result.overall_risk_score = max(90.0, result.overall_risk_score)
-                
-        except Exception as e:
-            import logging
-            logging.getLogger("lensint.analyzer").error(f"Bayesian Fusion Error: {e}")
-            # Safe fallback if fusion engine is unavailable
-            result.overall_risk_score = 0.0
-            result.overall_risk_level = "ANALYSIS_ERROR"
+        # Bayesian Log-Odds Fusion (Uses literature-derived Likelihood Ratios)
+        from lensint.modules.benchmarks import BayesianForensicFusionEngine
+        
+        has_c2_stego = any("C2 Stego" in f for f in result.stego.findings)
+        has_prompt_injection = any("Prompt Injection Alert" in f for f in result.summary_findings)
+        
+        calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
+            ela_score=result.tampering.ela_difference_max,
+            copy_move_detected=result.tampering.copy_move_detected,
+            dqt_anomaly=result.tampering.dqt_found,
+            cfa_anomaly=result.tampering.cfa_tampering_detected,
+            fft_ai_score=result.ai_detection.fft_spectral_score,
+            rs_stego_detected=result.stego.rs_steganalysis_detected,
+            chi_square_detected=result.stego.lsb_stego_detected,
+            metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
+            malware_threat=result.malware.has_threats,
+            confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
+            c2_stego_detected=has_c2_stego,
+            prompt_injection=has_prompt_injection
+        )
+
+        result.fusion_telemetry = fusion_log
+        
+        # Override risk level dynamically via Calibrated Fusion
+        result.overall_risk_score = calibrated_score
+        result.overall_risk_level = calibrated_verdict
+
+        if calibrated_verdict in ("HIGH", "CRITICAL"):
+            findings.append(f"Bayesian Fusion Engine escalated risk to {calibrated_verdict} (Risk: {calibrated_score:.1f}/100.0).")
+
+        # Failsafe escalation for extremely deterministic threats
+        if result.malware.has_threats or result.stego.has_overlay_data:
+            result.overall_risk_level = "CRITICAL"
+            result.overall_risk_score = max(90.0, result.overall_risk_score)
+
 
         if not findings:
             findings.append("No security threats, hidden payloads, or tampering indicators detected.")

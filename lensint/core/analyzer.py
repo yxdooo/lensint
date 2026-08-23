@@ -88,8 +88,16 @@ class ImageAnalyzer:
             if was_sampled:
                 result.summary_findings.append("Large image resolution downsampled for safe concurrent analysis.")
 
+        try:
+            from lensint import __version__
+            version_str = __version__
+        except ImportError:
+            version_str = "unknown"
+            
+        cache_key = f"{result.integrity.sha256}_{version_str}_ela{self.ela_quality}"
+
         if self.use_cache:
-            cached = get_cached(result.integrity.sha256)
+            cached = get_cached(cache_key)
             if cached is not None:
                 res = self._result_from_dict(cached)
                 res.analysis_duration_seconds = time.monotonic() - start_time
@@ -184,148 +192,108 @@ class ImageAnalyzer:
         self._calculate_verdict(result)
         result.analysis_duration_seconds = time.monotonic() - start_time
         if self.use_cache:
-            put_cache(result.integrity.sha256, result.to_dict())
+            put_cache(cache_key, result.to_dict())
         return result
 
     def _calculate_verdict(self, result: AnalysisResult) -> None:
-        score = 0.0
         findings = []
 
         if result.integrity.is_screenshot:
             findings.append(f"Classified as {result.integrity.screen_capture_type or 'Digital Screen Capture'} (Camera sensor heuristics contextualized).")
 
         if result.malware.has_threats:
-            score += 50.0
             for tf in result.malware.findings:
                 findings.append(tf)
 
         if result.integrity.extension_mismatch:
-            score += 40.0
             findings.append("Disguised file format / Extension spoofing detected.")
 
         if result.integrity.is_corrupt_or_truncated:
-            score += 15.0
             findings.append("Image structure is damaged or truncated.")
 
         if result.stego.has_overlay_data:
-            score += 35.0
             findings.append(f"Hidden trailing payload ({result.stego.overlay_size_bytes} bytes) found appended past image EOF.")
 
         suspicious_sigs = [s for s in result.stego.embedded_signatures if s["offset"] > 0]
         if suspicious_sigs:
-            score += 35.0
             sig_names = ", ".join(list(set(s["signature"] for s in suspicious_sigs[:3])))
             findings.append(f"Embedded payload/archive signatures discovered: {sig_names}.")
 
         if result.stego.extracted_payload_type:
-            score += 35.0
             findings.append(f"Carrier extraction: {result.stego.extracted_payload_type}.")
 
         if result.stego.lsb_stego_detected:
-            score += 25.0
             findings.append("Abnormally high LSB entropy indicates active steganographic carrier.")
 
-        # Deep Tampering Forensics
         if result.tampering.copy_move_detected:
-            score += 35.0
             findings.append(f"Copy-Move cloning detected ({result.tampering.copy_move_match_count} cloned keypoints).")
 
         if result.tampering.jpeg_ghosts_detected:
-            score += 30.0
             findings.append(f"JPEG Ghosts / Double compression detected (Quality variance: {result.tampering.jpeg_ghost_qualities}).")
 
         if result.tampering.cfa_tampering_detected:
-            score += 25.0
             findings.append(f"CFA Bayer demosaicing anomaly detected (Score: {result.tampering.cfa_inconsistency_score}/100). Splicing suspected.")
 
         if result.tampering.block_grid_shifted:
-            score += 25.0
             findings.append(f"8x8 DCT block grid phase shift detected (Offset: {result.tampering.block_grid_offset}). Pasted patch misaligned.")
 
         if result.tampering.chromatic_aberration_detected:
-            score += 20.0
             findings.append(f"Chromatic aberration radial vector anomaly detected (Score: {result.tampering.chromatic_aberration_inconsistency}/100).")
 
         if result.tampering.median_filter_detected:
-            score += 15.0
             findings.append(f"Median filter / Anti-forensic smoothing detected (Score: {result.tampering.median_filter_score}/100).")
 
         if result.tampering.illumination_conflict_detected:
-            score += 15.0
             findings.append(f"Illumination & lighting angle conflict detected (Score: {result.tampering.illumination_variance_score}/100).")
 
         if result.tampering.dqt_found and result.tampering.dqt_identified_encoder:
             if "Adobe" in result.tampering.dqt_identified_encoder or "GIMP" in result.tampering.dqt_identified_encoder:
-                score += 15.0
                 findings.append(f"DQT Quantization fingerprint confirms software edit: {result.tampering.dqt_identified_encoder}.")
 
         if result.tampering.suspicion_level == "HIGH" and not result.tampering.copy_move_detected and not result.tampering.jpeg_ghosts_detected:
-            score += 25.0
             findings.append("High tampering probability (ELA disparity & noise variance).")
         elif result.tampering.suspicion_level == "MEDIUM":
-            score += 10.0
             findings.append("Moderate compression variance suggests localized editing.")
 
-        # AI Detection
         if result.ai_detection.ai_verdict == "CONFIRMED_AI":
             findings.append(f"AI Generated / Synthetic image confirmed ({result.ai_detection.ai_generator_name}).")
         elif result.ai_detection.ai_verdict == "HIGH_PROBABILITY_AI":
             findings.append("AI Generation suspected (Characteristic diffusion FFT spectral grid spikes).")
 
         if result.metadata.software_footprint_findings:
-            score += 10.0
             findings.append(f"Metadata confirms editing: {result.metadata.software_footprint_findings[0]}")
 
         if result.metadata.thumbnail_mismatch_detected:
-            score += 40.0
             findings.append(f"EXIF Thumbnail Mismatch (SSIM: {result.metadata.thumbnail_ssim_score}): Deliberate selective editing detected.")
 
         if result.stego.rs_steganalysis_detected:
-            score += 25.0
             findings.append(f"RS Steganalysis confirmed LSB replacement (Est. payload capacity: {int(result.stego.rs_estimated_embedding_rate*100)}%).")
 
         if result.malware.yara_matches:
-            score += 45.0
             yara_names = ", ".join(m["rule"] for m in result.malware.yara_matches[:2])
             findings.append(f"YARA Rule match confirmed threat: {yara_names}.")
 
         if result.malware.deobfuscated_payloads:
-            score += 35.0
             findings.append(f"Auto-Deobfuscator extracted {len(result.malware.deobfuscated_payloads)} hidden payload(s).")
 
         if result.strings.iocs_detected["shell_commands"]:
-            score += 35.0
             cmds = ", ".join(result.strings.iocs_detected["shell_commands"][:3])
             findings.append(f"Dangerous shell execution keywords detected: {cmds}.")
 
         b64_count = len(result.strings.iocs_detected["base64_blobs"])
         if b64_count > 0:
-            score += 10.0
             findings.append(f"{b64_count} encoded Base64 payload blob(s) discovered.")
 
         if result.ocr.sensitive_findings:
-            score += 45.0
             leak_count = len(result.ocr.sensitive_findings)
             first_type = result.ocr.sensitive_findings[0]["type"]
             first_red = result.ocr.sensitive_findings[0]["redacted"]
             findings.append(f"Confidential Data Leak: {leak_count} secret(s) discovered including {first_type} ({first_red}).")
 
-        result.overall_risk_score = round(min(100.0, score), 1)
-        if result.overall_risk_score >= 70.0 or result.malware.has_threats:
-            result.overall_risk_level = "CRITICAL"
-        elif result.overall_risk_score >= 45.0:
-            result.overall_risk_level = "HIGH"
-        elif result.overall_risk_score >= 25.0:
-            result.overall_risk_level = "ELEVATED"
-        elif result.overall_risk_score > 0.0:
-            result.overall_risk_level = "LOW"
-        else:
-            result.overall_risk_level = "CLEAN"
-
-        # Apply Bayesian log-odds calibration
         try:
+            # 100% Bayesian Log-Odds Fusion (Replaces all manual score additions)
             from lensint.modules.benchmarks import BayesianForensicFusionEngine
-            calibrated_score, calibrated_verdict, _ = BayesianForensicFusionEngine.calculate_calibrated_risk(
+            calibrated_score, calibrated_verdict, fusion_log = BayesianForensicFusionEngine.calculate_calibrated_risk(
                 ela_score=result.tampering.ela_max_diff,
                 copy_move_detected=result.tampering.copy_move_detected,
                 dqt_anomaly=result.tampering.dqt_found,
@@ -335,12 +303,20 @@ class ImageAnalyzer:
                 chi_square_detected=result.stego.lsb_stego_detected,
                 metadata_anomaly=result.metadata.thumbnail_mismatch_detected,
                 malware_threat=result.malware.has_threats,
+                confirmed_payload=bool(result.stego.has_overlay_data or result.stego.extracted_payload_type),
             )
-            # If threats or deep anomalies exist, ensure calibrated level is preserved
-            if result.malware.has_threats:
+            result.overall_risk_score = calibrated_score
+            result.overall_risk_level = calibrated_verdict
+            
+            # Elevate explicitly if extreme threats bypass log-odds mapping limits
+            if result.malware.has_threats or result.ocr.sensitive_findings:
                 result.overall_risk_level = "CRITICAL"
+                result.overall_risk_score = max(90.0, result.overall_risk_score)
+                
         except Exception:
-            pass
+            # Safe fallback if fusion engine is unavailable
+            result.overall_risk_score = 0.0
+            result.overall_risk_level = "CLEAN"
 
         if not findings:
             findings.append("No security threats, hidden payloads, or tampering indicators detected.")

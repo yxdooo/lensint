@@ -91,7 +91,7 @@ class TestBenchmarksAndDecoders(unittest.TestCase):
         self.assertEqual(metrics["roc_auc"], 1.0)
         self.assertIn("optimal_youden_threshold", metrics)
         self.assertEqual(metrics["optimal_youden_threshold"], 50.0)
-        self.assertGreaterEqual(metrics["max_youden_j_index"], 0.99)
+        self.assertGreaterEqual(metrics["unbiased_youden_j_index"], 0.99)
 
 
 if __name__ == "__main__":

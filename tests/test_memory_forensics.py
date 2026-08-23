@@ -1,7 +1,7 @@
 import io
 import unittest
 from PIL import Image
-from lensint.modules.memory_forensics import MemoryForensicsEngine, VolatilityLensintPlugin
+from lensint.modules.memory_forensics import MemoryForensicsEngine
 
 
 class TestMemoryForensicsModule(unittest.TestCase):
@@ -32,12 +32,6 @@ class TestMemoryForensicsModule(unittest.TestCase):
         formats = [c["format"] for c in carved]
         self.assertIn("PNG", formats)
         self.assertIn("JPEG", formats)
-
-    def test_volatility_plugin_interface(self):
-        ram_stream = b"\x00" * 50 + self.png_bytes + b"\x00" * 50
-        results = VolatilityLensintPlugin.scan_layer_pages(ram_stream)
-        self.assertGreaterEqual(len(results), 1)
-        self.assertEqual(results[0]["format"], "PNG")
 
 
 if __name__ == "__main__":

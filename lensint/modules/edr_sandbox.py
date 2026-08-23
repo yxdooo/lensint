@@ -1,4 +1,4 @@
-"""Real-Time Endpoint Evidence Watcher, Process Attribution & Sandbox Ingestion Engine.
+"""Directory Watcher, Process Attribution & Sandbox Ingestion Engine.
 
 Provides:
 1. Real-time file system evidence drop monitoring for SOC incident response directories.
@@ -11,7 +11,7 @@ import logging
 import os
 import subprocess
 import time
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from lensint.core.analyzer import ImageAnalyzer
 from lensint.core.models import AnalysisResult
@@ -19,7 +19,7 @@ from lensint.core.models import AnalysisResult
 logger = logging.getLogger("lensint.watcher")
 
 
-class RealtimeDropMonitor:
+class DirectoryWatcher:
     """Continuous real-time evidence drop watcher for incident response directories."""
 
     def __init__(
@@ -31,7 +31,8 @@ class RealtimeDropMonitor:
         self.watch_dir = watch_directory
         self.alert_callback = alert_callback
         self.min_risk = min_risk_to_alert
-        self.processed_files: Set[str] = set()
+        # Stores (inode, mtime, size) to prevent race conditions and re-processing
+        self.processed_files: Set[Tuple[int, float, int]] = set()
         self._running = False
 
     @staticmethod
@@ -57,6 +58,16 @@ class RealtimeDropMonitor:
             pass
         return processes
 
+    def _is_file_stable(self, path: str) -> bool:
+        """Check if file is still being written to (simple size check wait)."""
+        try:
+            initial_size = os.path.getsize(path)
+            time.sleep(0.1)
+            final_size = os.path.getsize(path)
+            return initial_size == final_size and final_size > 0
+        except OSError:
+            return False
+
     def scan_new_drops_once(self) -> List[AnalysisResult]:
         """Scan directory once for any newly added image evidence."""
         from lensint.core.analyzer import ImageAnalyzer
@@ -70,16 +81,24 @@ class RealtimeDropMonitor:
                 ext = os.path.splitext(file)[1].lower()
                 if ext in supported_exts:
                     full_path = os.path.join(root, file)
-                    if full_path not in self.processed_files:
-                        self.processed_files.add(full_path)
-                        try:
+                    try:
+                        stat = os.stat(full_path)
+                        # Use a tuple of (inode, mtime, size) as a unique fingerprint
+                        file_fingerprint = (stat.st_ino, stat.st_mtime, stat.st_size)
+                        
+                        if file_fingerprint not in self.processed_files:
+                            if not self._is_file_stable(full_path):
+                                continue # Wait for the file to finish writing
+                                
+                            self.processed_files.add(file_fingerprint)
+                            
                             analyzer = ImageAnalyzer(full_path, use_cache=True)
                             res = analyzer.analyze()
                             results.append(res)
                             if self.alert_callback and res.overall_risk_level in ("HIGH", "CRITICAL"):
                                 self.alert_callback(res)
-                        except Exception as e:
-                            logger.error(f"Error analyzing dropped artifact {full_path}: {e}")
+                    except Exception as e:
+                        logger.error(f"Error analyzing dropped artifact {full_path}: {e}")
         return results
 
     def watch_continuously(self, poll_interval: float = 1.0, max_iterations: Optional[int] = None) -> None:
@@ -101,7 +120,8 @@ class RealtimeDropMonitor:
 
 
 # Backward compatibility alias
-EDRFileDropMonitor = RealtimeDropMonitor
+RealtimeDropMonitor = DirectoryWatcher
+EDRFileDropMonitor = DirectoryWatcher
 
 
 class SandboxIngestionEngine:

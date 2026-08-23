@@ -9,47 +9,44 @@
 [![Volatility 3](https://img.shields.io/badge/Volatility%203-Plugin%20Ready-blueviolet.svg)](https://github.com/volatilityfoundation/volatility3)
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-Passing-brightgreen.svg)](https://github.com/yxdooo/lensint/actions)
 
-**Lensint** is a modular digital image forensics, AI/Deepfake detection, and cybersecurity threat intelligence framework. Engineered for security researchers, incident responders (DFIR), SOC analysts, OSINT investigators, and digital forensic examiners, Lensint inspects digital images across multiple forensic dimensions to expose localized tampering, cloning, steganographic carriers, covert exfiltration channels, synthetic AI generation, confidential credential leaks, memory dump artifacts, and camera/software footprints.
+LENSINT is an advanced digital image forensics and threat hunting framework built for incident response, threat intelligence, and artifact analysis. It provides multi-dimensional inspection by combining classical physical image tampering analysis with steganography decoding, anomaly detection, neural model inference, and credential scanning.
 
 ---
 
 ## Key Capabilities
 
-### 1. Memory Forensics & Volatility 3 In-Memory Scanner (`--carve-memory`)
-- **Volatile RAM Dump Carver**: Carves image buffers (`PNG`, `JPEG`, `BMP`, `DIB`) directly from raw RAM dumps (`.raw`, `.dmp`, `.vmem`), clipboard allocations, and browser texture caches.
-- **Volatility 3 Plugin Integration**: Native plugin interface (`VolatilityLensintPlugin`) with standard requirements, layer scanning, and tree grid generators for process memory and kernel heap allocations.
+### 1. Memory Forensics (`--carve-memory`)
+- **Volatile RAM Dump Carver**: Carves image buffers (`PNG`, `JPEG`, `BMP`, `DIB`) directly from raw RAM dumps (`.raw`, `.dmp`, `.vmem`).
 - **In-Memory Buffer Scanner**: Detects concealed in-memory webshells and stego images unmapped on disk.
 
-### 2. C2 Steganography & Covert Channel Exfiltration Decoders
-- **Frequency & Matrix Embedding Stego Decoders**:
-  - **F5 Matrix Embedding Decoder**: Decodes $(1, 2^k - 1, k)$ syndrome matrix embedding across non-zero DCT coefficient streams.
-  - **OutGuess 0.2 Extractor**: LCG PRNG-steered DCT coefficient bit sequence extraction with configurable seeds.
-  - **JSteg AC Carver**: JPEG entropy-coded scan data bitstream carver following SOS markers.
+### 2. C2 Steganography & Covert Channel Extractors
+- **Frequency & Matrix Extractor Algorithms**:
+  - **F5 Matrix Embedding Decoder**: Extracts syndrome matrix payloads from non-zero LSB coefficient streams.
+  - **OutGuess 0.2 Extractor**: LCG PRNG-steered coefficient bit sequence extraction with configurable seeds.
+  - **JSteg Extractor**: Byte-stream based LSB extraction from JPEG entropy-coded scan data.
   - **Westfeld's Chi-Square ($\chi^2$) Analysis**: Mathematical test on Pairs of Values (PoVs) to detect LSB replacement.
   - **RS (Regular/Singular) Steganalysis**: Quantifies LSB replacement rate and estimates embedding capacity.
 - **PNG Covert Channel & Chunk Anomaly Analyzer**:
   - Detects non-standard custom chunk injections (`coVT`, `stEG`).
-  - Flags and extracts **CRC32 Checksum Parity Covert Channels** (tampered checksum fields carrying exfiltrated bits).
-  - Decompresses `zTXt`/`iTXt` hidden compression tunnels.
-  - Identifies IDAT chunk size fragmentation attacks.
+  - Flags **CRC32 Checksum Mismatches** and decompresses `zTXt`/`iTXt` hidden compression tunnels.
 
-### 3. Deep Learning AI & Multi-Spectral Neural Feature Extractor
-- **ONNX Model Inference with Model Manifest Negotiation**: Local execution support for neural forensics models (`TruFor`, `CNNDetection`, `UniversalFakeDetect`, `Swin-Transformer`) with configurable preprocessing and tensor shapes.
-- **Multi-Dimensional Academic Forensic Feature Layer**:
+### 3. Neural AI & Feature Extraction Pipeline
+- **ONNX Model Inference**: Local execution support for neural forensics models via ONNX Runtime with configurable preprocessing and tensor shapes defined in `manifest.json`.
+- **Academic Forensic Feature Layer**:
   - **High-Frequency Laplacian Residual Noise Energy**: Quantifies synthetic generator low-noise floor anomalies.
-  - **Spatial Gradient Curvature & Smoothness Ratio**: Detects diffusion-generated smoothness signatures.
+  - **Spatial Gradient Curvature & Smoothness Ratio**: Detects diffusion-generated smoothness signatures (Heuristic Anomaly Score).
   - **Inter-Channel Chrominance Correlation ($r_{RG}$)**: Flags unnatural RGB alignment in AI generators.
-- **Diffusion Prompt Injection & Jailbreak Hunter**: Scans image EXIF/PNG parameters and OCR text for prompt injection vectors (`"Ignore previous instructions"`, `"DAN Mode"`, `"[SYSTEM PROMPT]"`).
+- **Diffusion Prompt Injection Scanner**: Regex pattern scanner for EXIF/PNG parameters and OCR text to flag prompt injection vectors (`"Ignore previous instructions"`, `"DAN Mode"`).
 
 ### 4. Bayesian Multi-Modal Risk Fusion & Scientific Evaluation Harness
-- **Context-Aware Prior Probabilities**: Configurable priors for DFIR incident triage ($P_0 = 0.20$), wild social media OSINT ($P_0 = 0.05$), and criminal evidence inquiry ($P_0 = 0.50$).
+- **Context-Aware Prior Probabilities**: Configurable priors for incident triage ($P_0 = 0.20$), OSINT ($P_0 = 0.05$), and forensic inquiry ($P_0 = 0.50$).
 - **Correlation Attenuation & Dependency Discounting**: Applies logarithmic decay to correlated indicators (e.g. ELA + DQT recompression overlap) to prevent artificial posterior inflation.
-- **Executable Benchmark Harness (`DatasetBenchmarkRunner`)**: Ingests ground-truth labeled datasets (CASIA v2.0, CoMoFoD, BOSSBase, ForenSynths), computes empirical confusion matrices, and calculates ROC-AUC dynamically.
+- **Executable Benchmark Harness (`DatasetBenchmarkRunner`)**: Evaluates user-provided ground-truth labeled datasets, computes empirical confusion matrices, and calculates ROC-AUC dynamically with Train/Test Youden J Threshold optimization.
 
-### 5. Endpoint Evidence Watcher & Sandbox Dynamic Ingestion
-- **Continuous Artifact Drop Monitor (`--watch-dir`)**: Real-time event loop watching evidence dropzones and triggering instant multi-dimensional forensic analysis.
-- **Process Attribution Telemetry**: Captures active process snapshots (PID, process name, command line) to correlate newly dropped image artifacts with potential writer processes.
-- **CAPE / Cuckoo Sandbox Ingestion (`--sandbox-dir`)**: Ingests automated sandbox run directories, correlates desktop screenshots, scans for credential leaks via OCR, and produces an automated sandbox threat verdict (`CLEAN`, `SUSPICIOUS`, `MALICIOUS`).
+### 5. Polling-based Directory Watcher & Sandbox Dynamic Ingestion
+- **Continuous Artifact Drop Monitor (`--watch-dir`)**: Real-time polling event loop watching evidence dropzones and triggering multi-dimensional forensic analysis.
+- **Active Process Snapshot Telemetry**: Captures point-in-time process snapshots to correlate newly dropped image artifacts with potential writer processes.
+- **Sandbox Ingestion (`--sandbox-dir`)**: Ingests automated sandbox run directories, scans for credential leaks via OCR, and produces an automated sandbox threat verdict (`CLEAN`, `SUSPICIOUS`, `MALICIOUS`).
 
 ### 6. OCR & Confidential Secret Leak Hunter
 - **Secret & API Key Hunter**: Scans screenshots and documents for exposed credentials:

@@ -52,11 +52,8 @@ class NeuralDeepfakePipeline:
     def _load_manifest(self) -> Dict[str, Any]:
         manifest_path = os.path.join(self.model_dir, "manifest.json")
         if os.path.exists(manifest_path):
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
         return {
             "model_name": "Generic-ONNX-Deepfake-Detector",
             "input_size": [224, 224],
@@ -66,76 +63,75 @@ class NeuralDeepfakePipeline:
         }
 
     def predict_synthetic_probability(self, pil_img: Image.Image) -> Dict[str, Any]:
-        """Predict synthetic generation likelihood using ONNX model or multi-dimensional neural feature extractor."""
+        """Predict synthetic generation likelihood using ONNX model or fallback to heuristic anomaly scores."""
         if pil_img is None:
             return {"synthetic_probability": 0.0, "model_used": "None", "anomalies": []}
 
         # 1. ONNX Model Inference if model file is present
         model_path = os.path.join(self.model_dir, "deepfake_detector.onnx")
         if self.onnx_available and os.path.exists(model_path):
-            try:
-                import onnxruntime as ort
-                import hashlib
-                
-                manifest = self._load_manifest()
-                
-                # Model Integrity Verification
-                expected_sha256 = manifest.get("model_sha256")
-                if expected_sha256:
-                    with open(model_path, "rb") as mf:
-                        actual_sha256 = hashlib.sha256(mf.read()).hexdigest()
-                    if actual_sha256 != expected_sha256.lower():
-                        raise ValueError(f"Model integrity verification failed: expected {expected_sha256}, got {actual_sha256}")
+            # If the model is explicitly placed here, we do NOT swallow exceptions. 
+            # If it's corrupted or mismatched with manifest, it should raise.
+            import hashlib
+            
+            manifest = self._load_manifest()
+            
+            # Model Integrity Verification
+            expected_sha256 = manifest.get("model_sha256")
+            if expected_sha256:
+                with open(model_path, "rb") as mf:
+                    actual_sha256 = hashlib.sha256(mf.read()).hexdigest()
+                if actual_sha256 != expected_sha256.lower():
+                    raise ValueError(f"Model integrity verification failed: expected {expected_sha256}, got {actual_sha256}")
 
-                session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-                
-                # Preprocessing from manifest specs
-                input_w, input_h = manifest.get("input_size", [224, 224])
-                resized = pil_img.resize((input_w, input_h)).convert("RGB")
-                arr = np.array(resized, dtype=np.float32) / 255.0
+            import onnxruntime as ort
+            session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            
+            # Preprocessing from manifest specs
+            input_w, input_h = manifest.get("input_size", [224, 224])
+            resized = pil_img.resize((input_w, input_h)).convert("RGB")
+            arr = np.array(resized, dtype=np.float32) / 255.0
 
-                # Standardize
-                mean = np.array(manifest.get("mean", [0.485, 0.456, 0.406]), dtype=np.float32)
-                std = np.array(manifest.get("std", [0.229, 0.224, 0.225]), dtype=np.float32)
-                arr = (arr - mean) / std
+            # Standardize
+            mean = np.array(manifest.get("mean", [0.485, 0.456, 0.406]), dtype=np.float32)
+            std = np.array(manifest.get("std", [0.229, 0.224, 0.225]), dtype=np.float32)
+            arr = (arr - mean) / std
 
-                arr = np.transpose(arr, (2, 0, 1))  # CHW
-                tensor = np.expand_dims(arr, axis=0)  # NCHW
+            arr = np.transpose(arr, (2, 0, 1))  # CHW
+            tensor = np.expand_dims(arr, axis=0)  # NCHW
 
-                input_name = session.get_inputs()[0].name
-                outputs = session.run(None, {input_name: tensor})
-                
-                out_arr = np.array(outputs[0][0], dtype=np.float32)
-                
-                # Output Schema Validation
-                expected_classes = manifest.get("expected_classes")
-                if expected_classes and len(out_arr) != expected_classes:
-                    raise ValueError(f"Output schema mismatch: expected {expected_classes} classes, got {len(out_arr)}")
+            input_name = session.get_inputs()[0].name
+            outputs = session.run(None, {input_name: tensor})
+            
+            out_arr = np.array(outputs[0][0], dtype=np.float32)
+            
+            # Output Schema Validation
+            expected_classes = manifest.get("expected_classes")
+            if expected_classes and len(out_arr) != expected_classes:
+                raise ValueError(f"Output schema mismatch: expected {expected_classes} classes, got {len(out_arr)}")
 
-                activation = manifest.get("output_activation", "auto").lower()
-                class_idx = manifest.get("ai_class_index", 1)
+            activation = manifest.get("output_activation", "auto").lower()
+            class_idx = manifest.get("ai_class_index", 1)
 
-                if activation == "softmax" or (activation == "auto" and len(out_arr) > 1 and (np.min(out_arr) < 0 or np.max(out_arr) > 1.0)):
-                    exp_vals = np.exp(out_arr - np.max(out_arr))
-                    probs = exp_vals / np.sum(exp_vals)
-                    prob = float(probs[class_idx] if len(probs) > class_idx else probs[0])
-                elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1 and (out_arr[0] < 0 or out_arr[0] > 1.0)):
-                    val = float(out_arr[0])
-                    prob = 1.0 / (1.0 + math.exp(-val))
-                else:
-                    val = float(out_arr[class_idx] if len(out_arr) > class_idx else out_arr[0])
-                    prob = max(0.0, min(1.0, val))
+            if activation == "softmax" or (activation == "auto" and len(out_arr) > 1 and (np.min(out_arr) < 0 or np.max(out_arr) > 1.0)):
+                exp_vals = np.exp(out_arr - np.max(out_arr))
+                probs = exp_vals / np.sum(exp_vals)
+                prob = float(probs[class_idx] if len(probs) > class_idx else probs[0])
+            elif activation == "sigmoid" or (activation == "auto" and len(out_arr) == 1 and (out_arr[0] < 0 or out_arr[0] > 1.0)):
+                val = float(out_arr[0])
+                prob = 1.0 / (1.0 + math.exp(-val))
+            else:
+                val = float(out_arr[class_idx] if len(out_arr) > class_idx else out_arr[0])
+                prob = max(0.0, min(1.0, val))
 
-                model_label = f"ONNX Neural Engine ({manifest.get('model_name', os.path.basename(model_path))})"
-                return {
-                    "synthetic_probability": round(prob * 100.0, 2),
-                    "model_used": model_label,
-                    "anomalies": ["Neural deepfake activation spike"] if prob > 0.6 else [],
-                }
-            except Exception as e:
-                logger.warning(f"ONNX inference failed: {e}. Falling back to neural feature extractor.")
+            model_label = f"ONNX Neural Engine ({manifest.get('model_name', os.path.basename(model_path))})"
+            return {
+                "synthetic_probability": round(prob * 100.0, 2),
+                "model_used": model_label,
+                "anomalies": ["Neural deepfake activation spike"] if prob > 0.6 else [],
+            }
 
-        # 2. Multi-Dimensional Academic Forensic Feature Extractor (CoBiRe / ForenSynths / TruFor features)
+        # 2. Local Fallback: Multi-Dimensional Academic Forensic Feature Extractor
         anomalies = []
         arr = np.array(pil_img.convert("RGB"), dtype=np.float32)
         h, w, _ = arr.shape
@@ -169,26 +165,26 @@ class NeuralDeepfakePipeline:
         else:
             corr_rg = 0.95
 
-        # Academic synthetic index computation
-        synthetic_index = 0.0
+        # Academic heuristic anomaly index computation
+        heuristic_anomaly_score = 0.0
         if smoothness_ratio < 1.65:
-            synthetic_index += (1.65 - smoothness_ratio) * 45.0
+            heuristic_anomaly_score += (1.65 - smoothness_ratio) * 45.0
             anomalies.append("Synthetic gradient smoothness anomaly (Diffusion characteristic)")
 
         if residual_variance < 15.0:
-            synthetic_index += (15.0 - residual_variance) * 2.5
+            heuristic_anomaly_score += (15.0 - residual_variance) * 2.5
             anomalies.append("Unnaturally low high-frequency noise floor (Synthetic neural generator)")
 
         if corr_rg > 0.985:
-            synthetic_index += 15.0
+            heuristic_anomaly_score += 15.0
             anomalies.append("Excessive inter-channel chrominance alignment")
 
-        final_prob = min(100.0, max(0.0, round(synthetic_index, 2)))
+        final_score = min(100.0, max(0.0, round(heuristic_anomaly_score, 2)))
 
         return {
-            "synthetic_probability": final_prob,
+            "synthetic_probability": final_score, # Keep key for API compatibility, but semantics changed to heuristic score
             "model_used": "Spatial Gradient Curvature Heuristic (Local Algorithm)",
-            "anomalies": anomalies if final_prob > 40.0 else [],
+            "anomalies": anomalies if final_score > 40.0 else [],
             "features": {
                 "smoothness_ratio": round(smoothness_ratio, 3),
                 "residual_noise_variance": round(residual_variance, 3),
@@ -198,7 +194,7 @@ class NeuralDeepfakePipeline:
 
 
 def scan_prompt_injections(text_or_metadata: str) -> List[Dict[str, Any]]:
-    """Detect prompt injection and LLM jailbreak attempts concealed in visual metadata or OCR text."""
+    """Regex Pattern Scanner for detecting prompt injection strings in visual metadata/OCR."""
     hits = []
     if not text_or_metadata:
         return hits

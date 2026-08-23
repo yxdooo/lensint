@@ -20,7 +20,7 @@ from lensint.reporters.json_rep import render_json_report
 
 def build_serve_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lensint serve", description="Start Lensint REST API Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host address to bind (default: 0.0.0.0)")
+    parser.add_argument("--host", default="127.0.0.1", help="Host address to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
     return parser
 
@@ -145,6 +145,11 @@ Examples:
         help="Ingest and correlate dynamic sandbox run execution artifacts (CAPE / Cuckoo)",
     )
     parser.add_argument(
+        "--no-visuals",
+        action="store_true",
+        help="Disable generation of visual ELA/thumbnails (speeds up analysis)",
+    )
+    parser.add_argument(
         "-q", "--quiet",
         action="store_true",
         help="Suppress detailed console tables and output only the final verdict",
@@ -192,9 +197,9 @@ def main(args_list: List[str] = None) -> int:
 
     # 2. Real-Time Directory Artifact Watcher
     if args.watch_dir:
-        from lensint.modules.edr_sandbox import RealtimeDropMonitor
+        from lensint.modules.edr_sandbox import DirectoryWatcher
         console.print(f"[bold cyan]Starting Real-Time Artifact Watcher on:[/bold cyan] {args.watch_dir} (Press Ctrl+C to stop)...")
-        monitor = RealtimeDropMonitor(
+        monitor = DirectoryWatcher(
             args.watch_dir,
             alert_callback=lambda res: console.print(
                 f"[bold red]CRITICAL ALERT:[/bold red] {res.integrity.file_name} -> {res.overall_risk_level} (Score: {res.overall_risk_score})"
@@ -242,95 +247,105 @@ def main(args_list: List[str] = None) -> int:
     else:
         targets = [target]
 
-    for current_target in targets:
-        analyzer = ImageAnalyzer(
-            file_path=current_target,
-            ela_quality=args.ela_quality,
-            min_string_len=args.min_string_len,
-            generate_visuals=True,
-            perform_geolookup=args.geo_lookup,
-            use_cache=not args.no_cache,
-        )
+    is_batch = len(targets) > 1
 
-        result = analyzer.analyze()
-        render_console_report(result, console=console, quiet=args.quiet)
+    def _batch_path(base_path: str, stem: str) -> str:
+        """Insert <stem> before the extension of base_path when in batch mode."""
+        if not is_batch:
+            return base_path
+        root, ext = os.path.splitext(base_path)
+        return f"{root}_{stem}{ext}"
 
-        if getattr(result, 'cache_hit', False):
-            console.print("[dim]⚡ Result loaded from cache[/dim]")
-        if hasattr(result, 'analysis_duration_seconds'):
-            console.print(f"[dim]Analysis completed in {result.analysis_duration_seconds:.2f}s[/dim]")
-
-        # In batch mode, multiple files are analysed.  Inserting the stem of
-        # the current target into the output path prevents each file from
-        # silently overwriting the previous one.
-        is_batch = len(targets) > 1
-
-        def _batch_path(base_path: str, stem: str) -> str:
-            """Insert <stem> before the extension of base_path when in batch mode."""
-            if not is_batch:
-                return base_path
-            root, ext = os.path.splitext(base_path)
-            return f"{root}_{stem}{ext}"
-
-        target_stem = os.path.splitext(os.path.basename(current_target))[0]
-
-        if args.extract_overlay:
-            out_overlay = _batch_path(args.extract_overlay, target_stem)
-            if result.stego.has_overlay_data:
-                from lensint.modules.stego import detect_overlay_data
-                with open(current_target, "rb") as f:
-                    raw_b = f.read()
-                _, _, _, ov_bytes = detect_overlay_data(raw_b)
-                if ov_bytes:
-                    with open(out_overlay, "wb") as f_out:
-                        f_out.write(ov_bytes)
-                    console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
-            else:
-                console.print(f"[yellow]No overlay data found in {os.path.basename(current_target)}.[/yellow]")
-
-        if args.json:
-            json_path = _batch_path(args.json, target_stem)
-            with open(json_path, "w", encoding="utf-8") as jf:
-                jf.write(render_json_report(result))
-            console.print(f"[bold green]JSON forensic report written to:[/bold green] {json_path}")
-
-        if args.html:
-            html_path = _batch_path(args.html, target_stem)
-            with open(html_path, "w", encoding="utf-8") as hf:
-                hf.write(render_html_report(result))
-            console.print(f"[bold green]HTML forensic report written to:[/bold green] {html_path}")
-
-        if args.stix:
-            from lensint.reporters.stix_rep import export_stix_report
-            stix_path = _batch_path(args.stix, target_stem)
-            export_stix_report(result, stix_path)
-            console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
-
-        if args.misp:
-            from lensint.reporters.misp_rep import render_misp_report
-            misp_path = _batch_path(args.misp, target_stem)
-            with open(misp_path, "w", encoding="utf-8") as mf:
-                mf.write(render_misp_report(result))
-            console.print(f"[bold green]MISP JSON event written to:[/bold green] {misp_path}")
-
-        if args.generate_yara:
-            from lensint.reporters.yara_gen import generate_yara_rule
-            yara_path = _batch_path(args.generate_yara, target_stem)
-            with open(yara_path, "w", encoding="utf-8") as yf:
-                yf.write(generate_yara_rule(result))
-            console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
-
-        # Forensic Audit Trail & Chain of Custody Record
-        if not args.no_audit:
-            from lensint.audit import audit_logger
-            audit_entry = audit_logger.record_analysis(
-                result=result,
-                case_id=args.case_id,
-                examiner=args.examiner,
-                custom_log_path=args.audit_log,
+    def process_target(current_target: str) -> None:
+        try:
+            analyzer = ImageAnalyzer(
+                file_path=current_target,
+                ela_quality=args.ela_quality,
+                min_string_len=args.min_string_len,
+                generate_visuals=not args.no_visuals,
+                perform_geolookup=args.geo_lookup,
+                use_cache=not args.no_cache,
             )
-            if args.audit_log:
-                console.print(f"[dim]🔒 Sealed audit record saved (Seal: {audit_entry['audit_seal_sha256'][:12]}...)[/dim]")
+
+            result = analyzer.analyze()
+            render_console_report(result, console=console, quiet=args.quiet)
+
+            if getattr(result, 'cache_hit', False):
+                console.print(f"[dim]⚡ Result loaded from cache for {os.path.basename(current_target)}[/dim]")
+            if hasattr(result, 'analysis_duration_seconds'):
+                console.print(f"[dim]Analysis completed in {result.analysis_duration_seconds:.2f}s[/dim]")
+
+            target_stem = os.path.splitext(os.path.basename(current_target))[0]
+
+            if args.extract_overlay:
+                out_overlay = _batch_path(args.extract_overlay, target_stem)
+                if result.stego.has_overlay_data:
+                    from lensint.modules.stego import detect_overlay_data
+                    with open(current_target, "rb") as f:
+                        raw_b = f.read()
+                    _, _, _, ov_bytes = detect_overlay_data(raw_b)
+                    if ov_bytes:
+                        with open(out_overlay, "wb") as f_out:
+                            f_out.write(ov_bytes)
+                        console.print(f"[bold green]Successfully extracted overlay payload ({len(ov_bytes)} bytes) to:[/bold green] {out_overlay}")
+                else:
+                    console.print(f"[yellow]No overlay data found in {os.path.basename(current_target)}.[/yellow]")
+
+            if args.json:
+                json_path = _batch_path(args.json, target_stem)
+                with open(json_path, "w", encoding="utf-8") as jf:
+                    jf.write(render_json_report(result))
+                console.print(f"[bold green]JSON forensic report written to:[/bold green] {json_path}")
+
+            if args.html:
+                html_path = _batch_path(args.html, target_stem)
+                with open(html_path, "w", encoding="utf-8") as hf:
+                    hf.write(render_html_report(result))
+                console.print(f"[bold green]HTML forensic report written to:[/bold green] {html_path}")
+
+            if args.stix:
+                from lensint.reporters.stix_rep import export_stix_report
+                stix_path = _batch_path(args.stix, target_stem)
+                export_stix_report(result, stix_path)
+                console.print(f"[bold green]STIX 2.1 threat bundle written to:[/bold green] {stix_path}")
+
+            if args.misp:
+                from lensint.reporters.misp_rep import render_misp_report
+                misp_path = _batch_path(args.misp, target_stem)
+                with open(misp_path, "w", encoding="utf-8") as mf:
+                    mf.write(render_misp_report(result))
+                console.print(f"[bold green]MISP JSON event written to:[/bold green] {misp_path}")
+
+            if args.generate_yara:
+                from lensint.reporters.yara_gen import generate_yara_rule
+                yara_path = _batch_path(args.generate_yara, target_stem)
+                with open(yara_path, "w", encoding="utf-8") as yf:
+                    yf.write(generate_yara_rule(result))
+                console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
+
+            # Forensic Audit Trail & Chain of Custody Record
+            if not args.no_audit:
+                from lensint.audit import audit_logger
+                audit_entry = audit_logger.record_analysis(
+                    result=result,
+                    case_id=args.case_id,
+                    examiner=args.examiner,
+                    custom_log_path=args.audit_log,
+                )
+                if args.audit_log:
+                    console.print(f"[dim]🔒 Sealed audit record saved (Seal: {audit_entry['audit_seal_sha256'][:12]}...)[/dim]")
+                    
+        except Exception as e:
+            console.print(f"[bold red]Failed to process {current_target}:[/bold red] {e}")
+
+    if is_batch:
+        from concurrent.futures import ThreadPoolExecutor
+        console.print(f"[bold cyan]Starting batch analysis for {len(targets)} files...[/bold cyan]")
+        with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
+            executor.map(process_target, targets)
+    else:
+        for t in targets:
+            process_target(t)
 
     return 0
 

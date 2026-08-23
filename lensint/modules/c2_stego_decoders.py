@@ -1,12 +1,10 @@
-"""Advanced C2 Steganography & Covert Channel Exfiltration Decoders.
+"""Advanced C2 Steganography & Covert Channel Extractor (Byte-Stream Level).
 
-Full algorithmic decoders for:
-1. JSteg DCT AC Coefficient Bitstream Extraction.
-2. F5 Matrix Embedding (1, 2^k - 1, k) DCT Permutation Decoder.
-3. OutGuess 0.2 PRNG DCT Coefficient Stream Extractor.
-4. JPHide Blowfish/Linear DCT Bit Extractor.
-5. PNG Covert Channels: CRC32 Parity Bit Stream, IDAT Inter-Chunk Padding,
-   Custom Injected Chunks, and zTXt/iTXt Compression Tunnels.
+Provides heuristic extractors and structure anomaly detection for:
+1. JSteg Byte-Stream LSB Extraction (Not true DCT parsing).
+2. F5 Matrix Embedding (1, 2^k - 1, k) Byte-Stream Decoder.
+3. OutGuess 0.2 PRNG Byte-Stream Extractor.
+4. PNG Anomalies: CRC32 mismatches, IDAT fragmentation, and zTXt/iTXt compression.
 """
 from __future__ import annotations
 
@@ -17,10 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 STEGO_FREQUENCY_TOOL_MARKERS = [
     (b"\x00\x00\x00\x00\x00\x00\x00\x00JSTEG", "JSteg DCT Stego Carrier"),
-    (b"JPHIDE", "JPHide DCT Stego Carrier"),
     (b"F5_", "F5 Matrix Embedding DCT Stego Carrier"),
     (b"OUTGUESS", "OutGuess 0.2 Universal Stego Carrier"),
-    (b"Hide4PGP", "Hide4PGP Stego Carrier"),
 ]
 
 KNOWN_CARVED_MAGICS = [
@@ -87,7 +83,7 @@ class C2StegoDetector:
                         "calculated_crc": hex(calculated_crc),
                     })
                     result["findings"].append(
-                        f"Covert Channel Warning: CRC32 mismatch in {chunk_type.decode('latin-1', errors='ignore')} chunk at offset {hex(pos)}."
+                        f"Anomaly / Suspicious: CRC32 mismatch in {chunk_type.decode('latin-1', errors='ignore')} chunk at offset {hex(pos)}."
                     )
 
                 # Check for non-standard custom chunk names
@@ -146,13 +142,13 @@ class C2StegoDetector:
             small_idats = [s for s in idat_sizes[:-1] if s < 1024]
             if len(small_idats) > 2:
                 result["idat_size_anomalies"] = True
-                result["findings"].append(f"Suspicious IDAT fragmentation: {len(small_idats)} abnormally small IDAT chunks detected.")
+                result["findings"].append(f"Anomaly / Suspicious: IDAT fragmentation ({len(small_idats)} abnormally small IDAT chunks detected).")
 
         return result
 
     @staticmethod
     def analyze_frequency_stego_markers(raw_bytes: bytes) -> List[Dict[str, Any]]:
-        """Inspect JPEG DCT coefficients for JSteg, F5, JPHide, OutGuess signatures."""
+        """Inspect JPEG for JSteg, F5, OutGuess signature strings."""
         detected = []
         for marker, name in STEGO_FREQUENCY_TOOL_MARKERS:
             pos = raw_bytes.find(marker)
@@ -180,8 +176,20 @@ class C2StegoDetector:
         return detected
 
     @staticmethod
+    def _is_plaintext_payload(payload_bytes: bytes) -> bool:
+        """Heuristic check to prevent random bytes from triggering false positive ASCII alerts."""
+        check_len = min(128, len(payload_bytes))
+        if check_len < 10:
+            return False # Too short to reliably distinguish from noise
+        printable_count = sum(1 for b in payload_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
+        if check_len < 32:
+            return printable_count == check_len
+        # Require 95%+ printable characters in the first block
+        return printable_count >= int(check_len * 0.95)
+
+    @staticmethod
     def extract_jsteg_payload(raw_bytes: bytes, max_bytes: int = 512 * 1024) -> Optional[Dict[str, Any]]:
-        """Extract LSB bitstream from JPEG DCT entropy-coded scan data (JSteg algorithm)."""
+        """Extract LSB bitstream from JPEG entropy-coded scan bytes (Byte-Stream Extractor, not true DCT parser)."""
         if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
             return None
 
@@ -238,9 +246,7 @@ class C2StegoDetector:
                 }
 
         # Check for ASCII plaintext payload
-        check_len = min(128, len(final_bytes))
-        printable_count = sum(1 for b in final_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
-        if check_len >= 4 and printable_count >= int(check_len * 0.85):
+        if C2StegoDetector._is_plaintext_payload(final_bytes):
             return {
                 "extracted_format": "Plaintext C2 / Secret String",
                 "extension": ".txt",
@@ -253,11 +259,7 @@ class C2StegoDetector:
 
     @staticmethod
     def extract_f5_matrix_payload(raw_bytes: bytes, k: int = 3, max_bytes: int = 256 * 1024) -> Optional[Dict[str, Any]]:
-        """Decode F5 matrix embedding (1, 2^k - 1, k) from JPEG non-zero DCT coefficient streams.
-        
-        The F5 algorithm uses matrix embedding where k message bits are embedded in 2^k - 1 coefficients
-        using syndrome coding on a pseudo-random permutation sequence.
-        """
+        """Decode F5 matrix embedding from JPEG scan bytes (Byte-Stream Extractor, not true DCT parser)."""
         if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
             return None
 
@@ -306,9 +308,7 @@ class C2StegoDetector:
                 }
 
         # Check for ASCII plaintext payload
-        check_len = min(128, len(final_bytes))
-        printable_count = sum(1 for b in final_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
-        if check_len >= 4 and printable_count >= int(check_len * 0.85):
+        if C2StegoDetector._is_plaintext_payload(final_bytes):
             return {
                 "extracted_format": "Plaintext C2 / Secret String (F5)",
                 "extension": ".txt",
@@ -321,7 +321,7 @@ class C2StegoDetector:
 
     @staticmethod
     def extract_outguess_payload(raw_bytes: bytes, seed: int = 0x1337, max_bytes: int = 128 * 1024) -> Optional[Dict[str, Any]]:
-        """Extract OutGuess 0.2 PRNG-steered DCT coefficient bit sequence."""
+        """Extract OutGuess 0.2 PRNG-steered bit sequence from scan bytes (Byte-Stream Extractor)."""
         if not raw_bytes.startswith(b"\xFF\xD8\xFF"):
             return None
 
@@ -360,9 +360,7 @@ class C2StegoDetector:
                 }
                 
         # Check for ASCII plaintext payload
-        check_len = min(128, len(final_bytes))
-        printable_count = sum(1 for b in final_bytes[:check_len] if 32 <= b <= 126 or b in (9, 10, 13))
-        if check_len >= 4 and printable_count >= int(check_len * 0.85):
+        if C2StegoDetector._is_plaintext_payload(final_bytes):
             return {
                 "extracted_format": "Plaintext C2 / Secret String (OutGuess)",
                 "extension": ".txt",

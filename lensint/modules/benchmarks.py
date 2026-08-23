@@ -92,32 +92,43 @@ class DatasetBenchmarkRunner:
         max_samples: int = 500,
     ) -> Dict[str, Any]:
         """Run detector across clean and tampered directories, compute metrics and optimal Youden threshold."""
+        import random
         scores: List[Tuple[float, int]] = []  # (score, label: 1=tampered, 0=clean)
         errors: List[Dict[str, str]] = []
 
+        def get_images_recursively(directory: str) -> List[str]:
+            valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+            all_files = []
+            for root, _, files in os.walk(directory):
+                for f in files:
+                    if os.path.splitext(f)[1].lower() in valid_exts:
+                        all_files.append(os.path.join(root, f))
+            # Sort with fixed seed to ensure deterministic sampling
+            return sorted(all_files)
+
         # 1. Evaluate clean images (Ground truth = 0)
         if os.path.exists(clean_dir):
-            for idx, f in enumerate(os.listdir(clean_dir)):
-                if idx >= max_samples:
-                    break
-                path = os.path.join(clean_dir, f)
+            clean_files = get_images_recursively(clean_dir)
+            random.seed(42)
+            random.shuffle(clean_files)
+            for path in clean_files[:max_samples]:
                 try:
                     score = float(self.detector_fn(path))
                     scores.append((score, 0))
                 except Exception as e:
-                    errors.append({"file": f, "class": "clean", "error": str(e)})
+                    errors.append({"file": os.path.basename(path), "class": "clean", "error": str(e)})
 
         # 2. Evaluate tampered images (Ground truth = 1)
         if os.path.exists(tampered_dir):
-            for idx, f in enumerate(os.listdir(tampered_dir)):
-                if idx >= max_samples:
-                    break
-                path = os.path.join(tampered_dir, f)
+            tamp_files = get_images_recursively(tampered_dir)
+            random.seed(42)
+            random.shuffle(tamp_files)
+            for path in tamp_files[:max_samples]:
                 try:
                     score = float(self.detector_fn(path))
                     scores.append((score, 1))
                 except Exception as e:
-                    errors.append({"file": f, "class": "tampered", "error": str(e)})
+                    errors.append({"file": os.path.basename(path), "class": "tampered", "error": str(e)})
 
         total_samples = len(scores)
         total_errors = len(errors)
@@ -145,16 +156,40 @@ class DatasetBenchmarkRunner:
         precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
         accuracy = ((tp + tn) / total_samples) if total_samples > 0 else 0.0
 
-        # Empirical ROC-AUC via Wilcoxon-Mann-Whitney U statistic
+        # Empirical ROC-AUC via Wilcoxon-Mann-Whitney U statistic (O(N log N))
         auc = self._calculate_auc(scores)
+        auc_ci_lower, auc_ci_upper = self._calculate_auc_ci(auc, total_pos, total_neg)
 
-        # Dynamic Optimal Threshold Search via Youden's J Statistic (J = Sensitivity + Specificity - 1 = TPR - FPR)
-        optimal_th, max_j = self._find_optimal_youden_threshold(scores, total_pos, total_neg)
+        # Dynamic Optimal Threshold Search via Youden's J Statistic with Train/Test Split
+        random.seed(42)
+        random.shuffle(scores)
+        split_idx = int(len(scores) * 0.5)
+        train_scores = scores[:split_idx]
+        test_scores = scores[split_idx:]
+        
+        if len(set(lbl for _, lbl in train_scores)) < 2 or len(set(lbl for _, lbl in test_scores)) < 2:
+            train_scores = scores
+            test_scores = scores
+            
+        train_pos = sum(1 for _, lbl in train_scores if lbl == 1)
+        train_neg = sum(1 for _, lbl in train_scores if lbl == 0)
+        optimal_th, _ = self._find_optimal_youden_threshold(train_scores, train_pos, train_neg)
+        
+        # Test unbiased max_j on test set
+        test_pos = sum(1 for _, lbl in test_scores if lbl == 1)
+        test_neg = sum(1 for _, lbl in test_scores if lbl == 0)
+        test_tp = sum(1 for s, lbl in test_scores if lbl == 1 and s >= optimal_th)
+        test_fp = sum(1 for s, lbl in test_scores if lbl == 0 and s >= optimal_th)
+        unbiased_j = (test_tp / test_pos if test_pos > 0 else 0.0) - (test_fp / test_neg if test_neg > 0 else 0.0)
+
+        # Class balance warning
+        class_balance_warning = total_pos < (total_neg * 0.1) or total_neg < (total_pos * 0.1)
 
         return {
             "total_evaluated": total_samples,
             "total_failed": total_errors,
             "error_rate": round(error_rate, 4),
+            "class_imbalance": class_balance_warning,
             "true_positives": tp,
             "false_positives": fp,
             "true_negatives": tn,
@@ -164,9 +199,10 @@ class DatasetBenchmarkRunner:
             "precision": round(precision, 4),
             "accuracy": round(accuracy, 4),
             "roc_auc": round(auc, 4),
+            "roc_auc_95ci": [round(auc_ci_lower, 4), round(auc_ci_upper, 4)],
             "threshold_used": default_threshold,
             "optimal_youden_threshold": round(optimal_th, 2),
-            "max_youden_j_index": round(max_j, 4),
+            "unbiased_youden_j_index": round(unbiased_j, 4),
             "sample_errors": errors[:5],
         }
 
@@ -207,19 +243,51 @@ class DatasetBenchmarkRunner:
 
     @staticmethod
     def _calculate_auc(scores_with_labels: List[Tuple[float, int]]) -> float:
-        """Compute Area Under ROC Curve via Wilcoxon-Mann-Whitney U statistic."""
+        """Compute Area Under ROC Curve via Wilcoxon-Mann-Whitney U statistic (O(N log N))."""
         pos_scores = [s for s, label in scores_with_labels if label == 1]
         neg_scores = [s for s, label in scores_with_labels if label == 0]
         if not pos_scores or not neg_scores:
             return 0.5
-        u = 0.0
-        for p in pos_scores:
-            for n in neg_scores:
-                if p > n:
-                    u += 1.0
-                elif p == n:
-                    u += 0.5
-        return u / (len(pos_scores) * len(neg_scores))
+            
+        n_pos = len(pos_scores)
+        n_neg = len(neg_scores)
+        
+        all_sorted = sorted([(s, lbl) for s, lbl in scores_with_labels], key=lambda x: x[0])
+        
+        sum_ranks_pos = 0.0
+        i = 0
+        n = len(all_sorted)
+        while i < n:
+            j = i
+            while j < n and all_sorted[j][0] == all_sorted[i][0]:
+                j += 1
+            
+            avg_rank = (i + 1 + j) / 2.0
+            
+            for k in range(i, j):
+                if all_sorted[k][1] == 1:
+                    sum_ranks_pos += avg_rank
+            i = j
+            
+        u_pos = sum_ranks_pos - (n_pos * (n_pos + 1)) / 2.0
+        return u_pos / (n_pos * n_neg)
+
+    @staticmethod
+    def _calculate_auc_ci(auc: float, n_pos: int, n_neg: int) -> Tuple[float, float]:
+        """Hanley-McNeil approximation for 95% Confidence Interval of AUC."""
+        import math
+        if n_pos == 0 or n_neg == 0:
+            return auc, auc
+        
+        q1 = auc / (2 - auc) if auc != 2 else 0
+        q2 = 2 * auc**2 / (1 + auc) if auc != -1 else 0
+        
+        variance = (auc * (1 - auc) + (n_pos - 1)*(q1 - auc**2) + (n_neg - 1)*(q2 - auc**2)) / (n_pos * n_neg)
+        se = math.sqrt(max(0.0, variance))
+        
+        lower = max(0.0, auc - 1.96 * se)
+        upper = min(1.0, auc + 1.96 * se)
+        return float(lower), float(upper)
 
 
 class BayesianForensicFusionEngine:

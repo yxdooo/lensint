@@ -32,6 +32,7 @@ def get_cached(sha256: str) -> Optional[Dict[str, Any]]:
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        path.unlink(missing_ok=True)
         return None
 
 

@@ -2,13 +2,12 @@
 
 Extracts, carves, and analyzes image buffers, clipboard caches, and graphic textures
 from raw RAM memory dumps (.raw, .dmp, .vmem) or live process memory streams.
-Includes Volatility 3 compatible scanner engine and plugin interface.
 """
 from __future__ import annotations
 
 import io
 import os
-import re
+import struct
 from typing import Any, Dict, Generator, List, Optional, Tuple
 from PIL import Image
 
@@ -44,15 +43,30 @@ class MemoryForensicsEngine:
         if total_len < 32:
             return carved_results
 
-        # 1. Carve PNGs
+        # 1. Carve PNGs structurally
         png_pos = 0
         while len(carved_results) < max_images:
             png_pos = raw_memory.find(b"\x89PNG\r\n\x1a\n", png_pos)
             if png_pos == -1:
                 break
-            iend_pos = raw_memory.find(b"IEND", png_pos)
-            if iend_pos != -1 and (iend_pos + 8 - png_pos) <= self.max_carve_size:
-                img_data = raw_memory[png_pos : iend_pos + 8]
+            
+            cur = png_pos + 8
+            valid = True
+            while cur < total_len and cur - png_pos < self.max_carve_size:
+                if cur + 8 > total_len:
+                    valid = False
+                    break
+                length = int.from_bytes(raw_memory[cur : cur + 4], "big")
+                chunk_type = raw_memory[cur + 4 : cur + 8]
+                if length > self.max_carve_size:
+                    valid = False
+                    break
+                cur += 12 + length
+                if chunk_type == b"IEND":
+                    break
+
+            if valid and cur <= total_len:
+                img_data = raw_memory[png_pos : cur]
                 try:
                     with Image.open(io.BytesIO(img_data)) as test_img:
                         w, h = test_img.size
@@ -70,15 +84,45 @@ class MemoryForensicsEngine:
                     pass
             png_pos += 8
 
-        # 2. Carve JPEGs
+        # 2. Carve JPEGs structurally
         jpg_pos = 0
         while len(carved_results) < max_images:
             jpg_pos = raw_memory.find(b"\xFF\xD8\xFF", jpg_pos)
             if jpg_pos == -1:
                 break
-            eoi_pos = raw_memory.find(b"\xFF\xD9", jpg_pos + 4)
-            if eoi_pos != -1 and (eoi_pos + 2 - jpg_pos) <= self.max_carve_size:
-                img_data = raw_memory[jpg_pos : eoi_pos + 2]
+            
+            cur = jpg_pos + 2
+            valid = True
+            while cur < total_len and cur - jpg_pos < self.max_carve_size:
+                if raw_memory[cur] != 0xFF:
+                    valid = False
+                    break
+                marker = raw_memory[cur + 1]
+                if marker == 0xD9: # EOI
+                    cur += 2
+                    break
+                elif marker in (0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0x00, 0xFF):
+                    cur += 2
+                elif marker == 0xDA: # SOS
+                    if cur + 4 > total_len:
+                        valid = False
+                        break
+                    sos_len = int.from_bytes(raw_memory[cur + 2 : cur + 4], "big")
+                    cur += 2 + sos_len
+                    # Skip entropy coded data
+                    while cur < total_len - 1:
+                        if raw_memory[cur] == 0xFF and raw_memory[cur + 1] != 0x00 and not (0xD0 <= raw_memory[cur+1] <= 0xD7):
+                            break
+                        cur += 1
+                else:
+                    if cur + 4 > total_len:
+                        valid = False
+                        break
+                    length = int.from_bytes(raw_memory[cur + 2 : cur + 4], "big")
+                    cur += 2 + length
+
+            if valid and cur <= total_len and raw_memory[cur-2:cur] == b"\xFF\xD9":
+                img_data = raw_memory[jpg_pos : cur]
                 try:
                     with Image.open(io.BytesIO(img_data)) as test_img:
                         w, h = test_img.size
@@ -155,44 +199,3 @@ class MemoryForensicsEngine:
                 offset_base += len(new_chunk)
 
         return all_carved
-
-
-# Volatility 3 Plugin Implementation
-class VolatilityLensintPlugin:
-    """Native Volatility 3 Framework Plugin for in-memory image stego & forensics scanning.
-
-    Can be placed into Volatility 3's `volatility3/framework/plugins/` directory or
-    invoked directly within custom python volatility scripts.
-    """
-
-    _version = (3, 5, 0)
-    _description = "LENSINT Deep Stego & Visual Tampering Forensics Scanner for Volatility 3"
-
-    @classmethod
-    def get_requirements(cls):
-        """Volatility 3 plugin requirement declarations."""
-        return [
-            {"name": "primary", "description": "Memory layer for analysis"},
-        ]
-
-    @classmethod
-    def scan_layer_pages(cls, layer_bytes: bytes) -> List[Dict[str, Any]]:
-        """Scan raw memory layer pages for volatile image allocations."""
-        engine = MemoryForensicsEngine()
-        return engine.carve_memory_stream(layer_bytes)
-
-    @classmethod
-    def run_volatility_scan(cls, context, layer_name: str):
-        """Standard Volatility 3 generator yielding (0, (Offset, Format, Size, Dimensions, Verdict))."""
-        layer = context.layers[layer_name]
-        data = layer.read(0, layer.maximum_address)
-        engine = MemoryForensicsEngine()
-        carved = engine.carve_memory_stream(data)
-        for c in carved:
-            yield (0, (
-                hex(c["offset"]),
-                c["format"],
-                c["size_bytes"],
-                f"{c['dimensions'][0]}x{c['dimensions'][1]}",
-                c["source"],
-            ))

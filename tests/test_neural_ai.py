@@ -40,9 +40,9 @@ class TestNeuralAIModule(unittest.TestCase):
         pipeline = NeuralDeepfakePipeline(model_dir=tmpdir)
         pipeline.onnx_available = True
         
-        # It should fall back to feature extractor and log a warning when integrity fails,
-        res = pipeline.predict_synthetic_probability(self.test_img)
-        self.assertIn("Spatial Gradient Curvature", res["model_used"])
+        # Now that we enforce strict integrity checks, it should raise ValueError
+        with self.assertRaises(ValueError):
+            pipeline.predict_synthetic_probability(self.test_img)
 
 if __name__ == "__main__":
     unittest.main()

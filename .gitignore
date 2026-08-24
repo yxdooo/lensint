@@ -22,16 +22,34 @@ env/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
+Thumbs.db
 
-# Output files / Testing artifacts
-*.png
-*.jpg
-*.jpeg
-*.json
-*.html
-*.bin
+# Testing & Coverage
+.pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
-make_files.py
+coverage.xml
+*.cover
+
+# Temporary debug scripts and local scratch files
+debug_*.py
+debug_*.png
+test_output/
+tmp/
+temp/
+*.log
+
+# Generated output files (except committed samples & static assets)
+*.bin
+*.pdf
+*.yar
+*.dmp
+*.raw
+*.vmem
+
+# Whitelist intentional sample images and static assets
 !sample_images/**
 !lensint/web/**

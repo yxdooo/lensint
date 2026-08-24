@@ -309,6 +309,32 @@ def generate_expert_witness_pdf(
     story.append(Paragraph(ts_text, body_style))
     story.append(Spacer(1, 10))
 
+    # 5.5 Ultimate Expansion Forensics
+    story.append(Paragraph("5.5 LENSINT 4.5 Ultimate Forensics", heading2_style))
+    ult_data = [["Analysis Vector", "Result / Status"]]
+    
+    if getattr(result, "face_forensics", None):
+        ult_data.append(["Face-ROI Detection", "Faces Found: " + str(result.face_forensics.faces_found)])
+    if getattr(result, "audio_analysis", None):
+        ult_data.append(["Audio Spectrogram", "SYNTHETIC" if result.audio_analysis.is_synthetic_audio else "Natural"])
+    if getattr(result, "c2pa_verification", None):
+        ult_data.append(["C2PA/JUMBF Sig", "Verified" if result.c2pa_verification.is_valid else "None/Invalid"])
+    if getattr(result, "cmfd", None):
+        ult_data.append(["CMFD Copy-Move", "DETECTED" if result.cmfd.cloned_regions_detected else "Clean"])
+        
+    if len(ult_data) > 1:
+        t_ult = Table(ult_data, colWidths=[200, 340])
+        t_ult.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), PRIMARY),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('GRID', (0,0), (-1,-1), 1, colors.grey),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ]))
+        story.append(t_ult)
+        story.append(Spacer(1, 15))
+
     # 6. Certification & Digital Signature Block
     sig_block = [
         [

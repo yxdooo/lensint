@@ -251,15 +251,17 @@ def generate_expert_witness_pdf(
 
     cfa_status = "Tampering Anomaly Detected" if result.tampering.cfa_tampering_detected else "Consistent Bayer Pattern"
     dqt_status = result.tampering.dqt_identified_encoder or ("Quantization Anomaly" if result.tampering.dqt_hardware_mismatch else "Standard Table")
-    stego_status = "Payload / Marker Discovered" if (result.stego.has_overlay_data or result.stego.lsb_stego_detected or result.stego.c2_stego_detected) else "Clean Bitstream"
+    stego_status = "Payload / Marker Discovered" if (result.stego.has_overlay_data or getattr(result.stego, 'lsb_stego_detected', False) or getattr(result.stego, 'c2_stego_detected', False)) else "Clean Bitstream"
     ai_status = f"{result.ai_detection.ai_verdict} ({result.ai_detection.ai_probability_score:.1f}%)"
-    prnu_status = f"Matched: {result.prnu.matched_device_id} (PCE: {result.prnu.peak_to_correlation_energy:.1f})" if result.prnu.is_device_matched else ("Residual Extracted" if result.prnu.fingerprint_extracted else "N/A")
+    prnu_status = f"Matched: {result.prnu.matched_device_id} (PCE: {result.prnu.peak_to_correlation_energy:.1f})" if getattr(result, 'prnu', None) and result.prnu.is_device_matched else ("Residual Extracted" if getattr(result, 'prnu', None) and result.prnu.fingerprint_extracted else "N/A")
+    video_status = f"Format: {getattr(result.video, 'container_format', 'N/A')} | Cadence Break: {getattr(result.video, 'has_gop_cadence_break', False)}" if getattr(result, 'video', None) and getattr(result.video, 'is_video', False) else "Still Image Media"
 
     breakdown_data = [
         [Paragraph("<b>Physical Tampering (ELA / DQT / Ghost):</b>", body_style), Paragraph(f"ELA Score: {result.tampering.ela_suspicion_score:.1f}/100 | DQT: {dqt_status}", body_style)],
         [Paragraph("<b>Sensor CFA & PRNU Noise Correlation:</b>", body_style), Paragraph(f"CFA: {cfa_status} | PRNU: {prnu_status}", body_style)],
         [Paragraph("<b>Steganography & Carrier Covert Channels:</b>", body_style), Paragraph(stego_status, body_style)],
         [Paragraph("<b>AI / Deepfake Generative Synthesis:</b>", body_style), Paragraph(ai_status, body_style)],
+        [Paragraph("<b>Video & ISOBMFF Forensics:</b>", body_style), Paragraph(video_status, body_style)],
         [Paragraph("<b>Malware, Polyglot & YARA Threat Rules:</b>", body_style), Paragraph(f"Threats: {result.malware.has_threats} | Severity: {result.malware.severity}", body_style)],
     ]
     t_breakdown = Table(breakdown_data, colWidths=[200, 340])

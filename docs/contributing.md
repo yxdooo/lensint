@@ -1,53 +1,65 @@
 # Contributing to LENSINT
 
-Thank you for your interest in contributing to LENSINT! This guide outlines the development environment setup, code quality standards, and testing procedures.
+This document specifies the development setup, code quality requirements, architectural conventions, and automated testing procedures for contributing to LENSINT.
 
 ---
 
-## Development Setup
+## Development Environment Setup
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/yxdooo/lensint.git
-   cd lensint
-   ```
+### 1. Clone the Repository
+```bash
+git clone https://github.com/yxdooo/lensint.git
+cd lensint
+```
 
-2. **Create a Virtual Environment**:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
+### 2. Create and Activate a Virtual Environment
+```bash
+python -m venv .venv
 
-3. **Install Editable Package with Development Dependencies**:
-   ```bash
-   pip install -e ".[all]"
-   ```
+# On Linux / macOS:
+source .venv/bin/activate
+
+# On Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+```
+
+### 3. Install Package with Full Dependencies
+```bash
+pip install -e ".[all]"
+```
 
 ---
 
-## Running the Automated Test Suite
+## Automated Verification & Testing
 
-We maintain a modular test suite covering all core and forensic modules:
+Every Pull Request must pass the complete unit, regression, and integration test suite:
 
 ```bash
-# Run all tests with verbose output
+# Run complete test suite
 pytest tests/ -v
 
-# Run tests with code coverage analysis
+# Run test suite with code coverage reporting
 pytest tests/ --cov=lensint --cov-report=term-missing
 ```
 
 ---
 
-## Code Quality Standards
+## Engineering Standards & Code Quality
 
-Before submitting a Pull Request, ensure:
-- All 50 unit tests pass.
-- Flake8 linting passes without errors:
-  ```bash
-  flake8 lensint tests
-  ```
-- Security scanning passes cleanly:
-  ```bash
-  bandit -r lensint -ll -ii
-  ```
+1. **Strict Type Annotations**: All function arguments and return types must be fully type-hinted (`typing` / Python 3.9+ type syntax).
+2. **Deterministic Output & Exception Boundaries**: Forensic extractors must handle malformed binary input gracefully without unhandled exceptions or state leaks across worker threads.
+3. **No AI Clichés or Marketing Buzzwords**: All documentation, docstrings, and comments must adhere to technical, formal DFIR / IEEE standards in English with zero emojis.
+4. **Linting and Static Analysis**:
+   ```bash
+   # Linting
+   flake8 lensint tests
+
+   # Security vulnerability static analysis
+   bandit -r lensint -ll -ii
+   ```
+
+---
+
+## License
+
+By contributing to LENSINT, you agree that your contributions will be licensed under the project's [MIT License](../LICENSE).

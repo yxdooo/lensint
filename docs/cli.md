@@ -7,7 +7,7 @@ lensint [TARGET] [OPTIONS]
 lensint serve [--host HOST] [--port PORT]
 ```
 
-LENSINT provides an operator-grade Command Line Interface (CLI) designed for incident responders, law enforcement forensic analysts, and automated DFIR scripting. The CLI supports single-target forensic examination, multi-threaded batch ingestion, volatile memory dump carving, dynamic sandbox artifact ingestion, and real-time directory monitoring.
+LENSINT provides an operator-grade Command Line Interface (CLI) designed for incident responders, law enforcement forensic analysts, intelligence specialists, and automated DFIR pipelines. The CLI supports single-target forensic examination, multi-threaded batch ingestion, network packet capture carving (`.pcap`/`.pcapng`), volatile memory dump carving, dynamic sandbox artifact ingestion, and real-time directory monitoring.
 
 ---
 
@@ -25,10 +25,11 @@ LENSINT provides an operator-grade Command Line Interface (CLI) designed for inc
 | `--generate-yara` | `PATH` | String | `None` | Generate deployable YARA detection rule (`.yar`) matching detected threats and hashes |
 | `--extract-overlay` | `PATH` | String | `None` | Extract binary payload appended past image/video EOF container boundary |
 | `--carve-memory` | `PATH` | String | `None` | Carve and analyze volatile image buffers from raw RAM dump (`.raw`, `.dmp`, `.vmem`) |
-| `--out-dir` | `DIR` | String | `None` | Directory path to save carved memory images or batch artifacts |
+| `--pcap` | `PATH` | String | `None` | Ingest and carve transmitted image/video artifacts from network PCAP/PCAPNG capture stream |
+| `--out-dir` | `DIR` | String | `None` | Directory path to save carved memory images, network artifacts, or batch dumps |
 | `--watch-dir` | `DIR` | String | `None` | Run real-time filesystem watcher on directory for newly dropped files |
 | `--sandbox-dir` | `DIR` | String | `None` | Ingest and correlate dynamic sandbox run execution artifacts (CAPE / Cuckoo) |
-| `--tsa-server` | `URL` | String | `None` | RFC 3161 Time-Stamp Authority endpoint for digital timestamping |
+| `--tsa-server` | `URL` | String | `None` | RFC 3161 Time-Stamp Authority endpoint for digital evidence timestamping |
 | `--case-id` | `ID` | String | `None` | Forensic Case Identifier recorded in cryptographically sealed audit ledger |
 | `--examiner` | `NAME` | String | `None` | Name of forensic examiner recorded in chain of custody |
 | `--audit-log` | `PATH` | String | `None` | Custom path to append cryptographically sealed forensic audit log entry |
@@ -43,7 +44,7 @@ LENSINT provides an operator-grade Command Line Interface (CLI) designed for inc
 
 ---
 
-## Operational Scenarios
+## Operational Workflows & Scenarios
 
 ### Scenario 1: Formal Courtroom Evidence Examination (ISO/IEC 27037 & RFC 3161)
 Conducts a full forensic examination on seized photographic evidence, queries a public RFC 3161 Time-Stamp Authority for non-repudiation, records the examiner identity in the chained audit ledger, and outputs a courtroom-admissible PDF report alongside interactive HTML and raw JSON datasets.
@@ -59,8 +60,16 @@ lensint evidence_item_042.jpg \
   --geo-lookup
 ```
 
-### Scenario 2: Steganographic Payload Carving and Automated YARA Rule Generation
-Analyzes a suspected C2 steganographic carrier, extracts trailing binary payloads appended past the image EOF, and automatically generates a deployable YARA rule matching the carrier hash, file magic, and extracted payload signatures for immediate enterprise endpoint deployment.
+### Scenario 2: Network PCAP/PCAPNG Packet Stream Multimedia Carving (`--pcap`)
+Parses live or archived network capture files (`.pcap`, `.pcapng`), executes stateful bidirectional TCP stream reassembly, dechunks HTTP/1.1 and HTTP/2 payloads, carves multipart uploads and SMB2/SMB3 file transfers, and writes extracted media artifacts directly to disk.
+
+```bash
+lensint --pcap /captures/network_surveillance.pcapng \
+        --out-dir /cases/case_9912/carved_network_media/
+```
+
+### Scenario 3: Steganographic Payload Carving & Automated YARA Rule Generation
+Analyzes a suspected C2 steganographic carrier, extracts trailing binary payloads appended past the image EOF, and automatically compiles a deployable YARA rule matching the carrier hash, file magic, and extracted payload signatures for enterprise EDR deployment.
 
 ```bash
 lensint suspected_carrier.png \
@@ -70,7 +79,7 @@ lensint suspected_carrier.png \
   --misp "misp_event.json"
 ```
 
-### Scenario 3: Volatile Memory Dump Image Carving (`--carve-memory`)
+### Scenario 4: Volatile RAM Memory Dump Image Carving (`--carve-memory`)
 Scans unallocated RAM, process heaps, and virtual address descriptors (VADs) within physical memory dumps (`.raw`, `.dmp`, `.vmem`) to recover uncommitted GDI/DIB graphic surfaces, browser cache images, and in-memory C2 steganography carrier buffers.
 
 ```bash
@@ -78,7 +87,7 @@ lensint --carve-memory /dumps/infected_workstation_ram.raw \
         --out-dir /cases/case_9912/carved_images/
 ```
 
-### Scenario 4: Dynamic Malware Sandbox Artifact Ingestion (`--sandbox-dir`)
+### Scenario 5: Dynamic Malware Sandbox Artifact Ingestion (`--sandbox-dir`)
 Ingests automated malware execution runs from CAPE or Cuckoo sandbox storage directories. Automatically parses process trees, extracts runtime desktop screenshots, scans OCR visual surfaces for leaked API keys or credentials, and correlates network indicators into a consolidated threat verdict.
 
 ```bash
@@ -86,14 +95,14 @@ lensint --sandbox-dir /opt/cuckoo/storage/analyses/1337/ \
         --html /reports/sandbox_run_1337_report.html
 ```
 
-### Scenario 5: Real-Time EDR File-Drop Directory Monitoring (`--watch-dir`)
+### Scenario 6: Real-Time EDR File-Drop Directory Monitoring (`--watch-dir`)
 Runs a continuous, low-latency filesystem monitor on network share drop-zones or Suricata extracted file directories. Audits incoming media files as they are written to disk, emitting high-priority console alerts when CRITICAL or HIGH risk scores are detected.
 
 ```bash
 lensint --watch-dir /var/log/suricata/extracted_files/
 ```
 
-### Scenario 6: High-Throughput Batch Processing
+### Scenario 7: High-Throughput Batch Processing
 Recursively scans large directories containing thousands of images. Analysis is distributed across a worker pool with thread-safe result emission. When outputting reports in batch mode, files are automatically suffixed with the target stem and hash prefix (`<base>_<stem>_<hash6>.<ext>`) to prevent collision.
 
 ```bash
@@ -105,8 +114,8 @@ lensint /evidence/batch_intake/ \
   --quiet
 ```
 
-### Scenario 7: Headless REST API and Web UI Daemon
-Launches the asynchronous REST API server with embedded Swagger documentation and interactive drag-and-drop web UI.
+### Scenario 8: Headless REST API and Web UI Daemon
+Launches the asynchronous REST API server with embedded OpenAPI Swagger documentation and interactive drag-and-drop web UI.
 
 ```bash
 lensint serve --host 0.0.0.0 --port 8000

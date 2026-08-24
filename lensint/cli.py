@@ -156,6 +156,11 @@ Examples:
         help="Run EDR real-time monitor on target directory for newly dropped evidence files",
     )
     parser.add_argument(
+        "--pcap",
+        metavar="PCAP_PATH",
+        help="Extract and carve transmitted image/video artifacts from network PCAP/PCAPNG capture stream",
+    )
+    parser.add_argument(
         "--sandbox-dir",
         metavar="DIR",
         help="Ingest and correlate dynamic sandbox run execution artifacts (CAPE / Cuckoo)",
@@ -247,6 +252,22 @@ def main(args_list: List[str] = None) -> int:
             monitor.watch_continuously(poll_interval=1.0)
         except KeyboardInterrupt:
             console.print("\n[yellow]Watcher stopped by analyst.[/yellow]")
+        return 0
+
+    # 3. Network PCAP/PCAPNG Packet Stream Carver
+    if args.pcap:
+        from lensint.modules.pcap_stream import carve_pcap_file
+        console.print(f"[bold cyan]Parsing and carving network PCAP stream:[/bold cyan] {args.pcap}...")
+        pcap_rep = carve_pcap_file(args.pcap)
+        console.print(f"[bold green]Processed {pcap_rep.total_packets_parsed} packets across {pcap_rep.total_tcp_streams} TCP streams.[/bold green]")
+        console.print(f"[bold green]Successfully carved {len(pcap_rep.carved_artifacts)} media artifact(s).[/bold green]")
+        if args.out_dir:
+            os.makedirs(args.out_dir, exist_ok=True)
+            for idx, item in enumerate(pcap_rep.carved_artifacts):
+                out_path = os.path.join(args.out_dir, item["file_name"])
+                with open(out_path, "wb") as f_art:
+                    f_art.write(item["raw_bytes"])
+            console.print(f"[bold green]Exported carved network assets to:[/bold green] {args.out_dir}")
         return 0
 
     # 3. Sandbox Ingestion

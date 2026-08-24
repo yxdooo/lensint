@@ -70,6 +70,10 @@ class ImageAnalyzer:
         if "pdq" in d:             _fill(result.pdq, d["pdq"])
         if "video" in d:           _fill(result.video, d["video"])
         if "timestamp_token" in d: _fill(result.timestamp_token, d["timestamp_token"])
+        if "c2pa_manifest" in d:   _fill(result.c2pa_manifest, d["c2pa_manifest"])
+        if "biometrics" in d:      _fill(result.biometrics, d["biometrics"])
+        if "optics" in d:          _fill(result.optics, d["optics"])
+        if "neural_stego" in d:    _fill(result.neural_stego, d["neural_stego"])
         if "fusion_telemetry" in d: result.fusion_telemetry = d["fusion_telemetry"]
         return result
 
@@ -293,6 +297,44 @@ class ImageAnalyzer:
             result.timestamp_token = query_rfc3161_tsa(result.integrity.sha256)
         except Exception as e:
             logger.debug(f"TSA timestamp seal: {e}")
+
+        # C2PA / Content Authenticity JUMBF Manifest Analysis
+        try:
+            from lensint.modules.c2pa_manifest import analyze_c2pa_manifest
+            with open(self.file_path, "rb") as f_c2pa:
+                raw_c2pa_bytes = f_c2pa.read()
+            result.c2pa_manifest = analyze_c2pa_manifest(raw_c2pa_bytes)
+            for cf in result.c2pa_manifest.findings:
+                result.summary_findings.append(cf)
+        except Exception as e:
+            logger.debug(f"C2PA manifest analysis: {e}")
+
+        # Deep Neural & Content-Adaptive Steganalysis (SRM / Steghide / OpenPuff)
+        try:
+            from lensint.modules.neural_stego import analyze_neural_stego
+            with open(self.file_path, "rb") as f_nstego:
+                raw_nstego_bytes = f_nstego.read()
+            result.neural_stego = analyze_neural_stego(pil_img, raw_nstego_bytes)
+            for nsf in result.neural_stego.findings:
+                result.summary_findings.append(nsf)
+        except Exception as e:
+            logger.debug(f"Neural steganography analysis: {e}")
+
+        # Optical Sensor Dust & Lens Distortion Profiling
+        try:
+            from lensint.modules.optics_dust import extract_sensor_dust_map, profile_lens_distortion
+            if pil_img and not result.integrity.is_screenshot:
+                dust_map = extract_sensor_dust_map(pil_img)
+                dist_prof = profile_lens_distortion(pil_img)
+                result.optics.dust_spots_detected = len(dust_map.spots)
+                result.optics.has_dust_pattern = len(dust_map.spots) >= 3
+                result.optics.distortion_profile = dist_prof.profile_type
+                result.optics.radial_k1 = dist_prof.radial_k1
+                result.optics.radial_k2 = dist_prof.radial_k2
+                for of in dist_prof.findings:
+                    result.summary_findings.append(of)
+        except Exception as e:
+            logger.debug(f"Optics analysis: {e}")
 
         self._calculate_verdict(result)
         result.analysis_duration_seconds = time.monotonic() - start_time

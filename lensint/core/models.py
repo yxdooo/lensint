@@ -333,6 +333,96 @@ class TimestampTokenReport:
 
 
 @dataclass
+class C2PAReport:
+    is_c2pa_present: bool = False
+    has_valid_jumbf: bool = False
+    manifest_count: int = 0
+    active_manifest_label: Optional[str] = None
+    title: Optional[str] = None
+    format: str = "Unknown"
+    claim_generator: Optional[str] = None
+    actions: List[Dict[str, Any]] = field(default_factory=list)
+    assertions: List[Dict[str, Any]] = field(default_factory=list)
+    signature_info: Dict[str, Any] = field(default_factory=dict)
+    has_ai_generative_action: bool = False
+    ai_models_used: List[str] = field(default_factory=list)
+    is_signature_verified: bool = False
+    is_asset_binding_verified: bool = False
+    is_manifest_stripped: bool = False
+    has_anti_forensic_tampering: bool = False
+    thumbnail_b64: Optional[str] = None
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BiometricsReport:
+    is_video_analyzed: bool = False
+    total_frames_analyzed: int = 0
+    duration_seconds: float = 0.0
+    dominant_pulse_bpm: float = 0.0
+    pulse_snr_db: float = 0.0
+    is_cardiovascular_pulse_detected: bool = False
+    facial_phase_coherence: float = 1.0
+    is_phase_coherent: bool = True
+    blink_rate_bpm: float = 0.0
+    poisson_blink_p_value: float = 1.0
+    is_poisson_blink_consistent: bool = True
+    corneal_gaze_divergence_deg: float = 0.0
+    is_corneal_reflection_consistent: bool = True
+    deepfake_biological_score: float = 0.0
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class OpticsReport:
+    dust_spots_detected: int = 0
+    has_dust_pattern: bool = False
+    distortion_profile: str = "FLAT_OR_UNKNOWN"
+    radial_k1: float = 0.0
+    radial_k2: float = 0.0
+    tangential_p1: float = 0.0
+    tangential_p2: float = 0.0
+    is_synthetic_zero_distortion: bool = False
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class NeuralStegoReport:
+    is_stego_detected: bool = False
+    stego_probability_score: float = 0.0
+    stego_algorithm_family: str = "CLEAN"
+    srm_residual_energy: float = 0.0
+    estimated_embedding_rate_bpp: float = 0.0
+    estimated_payload_bytes: int = 0
+    steghide_anomaly_score: float = 0.0
+    openpuff_entropy_score: float = 0.0
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class PCAPStreamReport:
+    total_packets_parsed: int = 0
+    total_tcp_streams: int = 0
+    carved_artifacts: List[Dict[str, Any]] = field(default_factory=list)
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class AnalysisResult:
     target_path: str = ""
     timestamp: str = ""
@@ -354,6 +444,10 @@ class AnalysisResult:
     pdq: PDQReport = field(default_factory=PDQReport)
     video: VideoForensicsReport = field(default_factory=VideoForensicsReport)
     timestamp_token: TimestampTokenReport = field(default_factory=TimestampTokenReport)
+    c2pa_manifest: C2PAReport = field(default_factory=C2PAReport)
+    biometrics: BiometricsReport = field(default_factory=BiometricsReport)
+    optics: OpticsReport = field(default_factory=OpticsReport)
+    neural_stego: NeuralStegoReport = field(default_factory=NeuralStegoReport)
     fusion_telemetry: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -378,5 +472,9 @@ class AnalysisResult:
             "pdq": self.pdq.to_dict(),
             "video": self.video.to_dict(),
             "timestamp_token": self.timestamp_token.to_dict(),
+            "c2pa_manifest": self.c2pa_manifest.to_dict(),
+            "biometrics": self.biometrics.to_dict(),
+            "optics": self.optics.to_dict(),
+            "neural_stego": self.neural_stego.to_dict(),
             "fusion_telemetry": self.fusion_telemetry,
         }

@@ -167,20 +167,52 @@ class ImageAnalyzer:
             from lensint.modules.ocr_scan import analyze_ocr
             return analyze_ocr(pil_img.copy() if pil_img else None)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            f_metadata = executor.submit(_run_metadata)
-            f_stego = executor.submit(_run_stego)
-            f_strings = executor.submit(_run_strings)
-            f_ai = executor.submit(_run_ai_detect)
-            f_malware = executor.submit(_run_malware)
-            f_ocr = executor.submit(_run_ocr)
+        # Use min(available_cpus, 6) threads so we don't over-subscribe on
+        # low-core machines while still saturating multi-core workstations.
+        # A per-task timeout of 120 s prevents a single slow module from
+        # blocking the entire pipeline indefinitely.
+        _MAX_WORKERS = min(os.cpu_count() or 2, 6)
+        _TASK_TIMEOUT = float(os.environ.get("LENSINT_MODULE_TIMEOUT", "120"))
 
-            result.metadata = f_metadata.result()
-            result.stego = f_stego.result()
-            result.strings = f_strings.result()
-            result.ai_detection = f_ai.result()
-            result.malware = f_malware.result()
-            result.ocr = f_ocr.result()
+        futures_map = {}
+        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+            futures_map["metadata"] = executor.submit(_run_metadata)
+            futures_map["stego"]    = executor.submit(_run_stego)
+            futures_map["strings"]  = executor.submit(_run_strings)
+            futures_map["ai"]       = executor.submit(_run_ai_detect)
+            futures_map["malware"]  = executor.submit(_run_malware)
+            futures_map["ocr"]      = executor.submit(_run_ocr)
+
+            def _safe_result(key, future, timeout=_TASK_TIMEOUT):
+                try:
+                    return future.result(timeout=timeout)
+                except Exception as exc:
+                    logger.warning(
+                        "Module '%s' failed or timed out after %.0fs: %s",
+                        key, timeout, exc,
+                    )
+                    return None
+
+            meta_res    = _safe_result("metadata", futures_map["metadata"])
+            stego_res   = _safe_result("stego",    futures_map["stego"])
+            strings_res = _safe_result("strings",  futures_map["strings"])
+            ai_res      = _safe_result("ai",       futures_map["ai"])
+            malware_res = _safe_result("malware",  futures_map["malware"])
+            ocr_res     = _safe_result("ocr",      futures_map["ocr"])
+
+        # Assign results, falling back to empty report objects on failure
+        if meta_res is not None:
+            result.metadata = meta_res
+        if stego_res is not None:
+            result.stego = stego_res
+        if strings_res is not None:
+            result.strings = strings_res
+        if ai_res is not None:
+            result.ai_detection = ai_res
+        if malware_res is not None:
+            result.malware = malware_res
+        if ocr_res is not None:
+            result.ocr = ocr_res
 
         # If OCR text wasn't extracted via image OCR, cross-correlate with binary strings
         if not result.ocr.text_detected and result.strings.sample_strings:

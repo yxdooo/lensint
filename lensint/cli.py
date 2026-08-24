@@ -193,6 +193,32 @@ def handle_serve(args_list: List[str]) -> int:
         return 1
 
 
+def handle_model_info() -> int:
+    """Display neural ONNX pipeline status and configuration."""
+    from lensint.model_manager import print_model_status_report
+    ready = print_model_status_report()
+    return 0 if ready else 1
+
+
+def handle_model_setup(args_list: list) -> int:
+    """Generate a manifest.json skeleton in the model directory."""
+    from lensint.model_manager import create_manifest_skeleton, get_model_dir
+    from pathlib import Path
+    console = Console()
+
+    output_path = None
+    if args_list:
+        output_path = Path(args_list[0])
+
+    skeleton_path = create_manifest_skeleton(output_path)
+    console.print(
+        f"[bold green]Manifest skeleton written to:[/bold green] {skeleton_path}\n"
+        "[dim]Edit the file to match your model, then place your .onnx file in the "
+        f"same directory:[/dim]\n  [cyan]{get_model_dir() / 'deepfake_detector.onnx'}[/cyan]"
+    )
+    return 0
+
+
 def main(args_list: List[str] = None) -> int:
     if args_list is None:
         args_list = sys.argv[1:]
@@ -201,6 +227,12 @@ def main(args_list: List[str] = None) -> int:
 
     if args_list and args_list[0] == "serve":
         return handle_serve(args_list[1:])
+
+    if args_list and args_list[0] == "model-info":
+        return handle_model_info()
+
+    if args_list and args_list[0] == "model-setup":
+        return handle_model_setup(args_list[1:])
 
     parser = build_parser()
     args = parser.parse_args(args_list)

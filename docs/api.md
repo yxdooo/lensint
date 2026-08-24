@@ -38,6 +38,32 @@ To prevent Denial of Service (DoS) attacks via memory exhaustion and large disk 
 ### 3. Cross-Origin Resource Sharing (CORS)
 CORS policies are controlled via the `LENSINT_CORS_ORIGINS` environment variable (comma-delimited list of authorized origins). By default, local loopback origins (`http://localhost:8000`, `http://127.0.0.1:8000`, `http://localhost:3000`) are permitted.
 
+### 4. Token-Bucket Rate Limiting
+When `LENSINT_API_KEY` is configured, all analysis endpoints enforce a **per-IP token-bucket rate limiter**. Rate limiting is automatically disabled in open (unauthenticated) local mode to avoid blocking development workflows.
+
+| Parameter | Default | Environment Variable |
+| :--- | :--- | :--- |
+| Requests per minute | `30` | `LENSINT_RATE_LIMIT_PER_MIN` |
+| Burst tolerance | `10` | `LENSINT_RATE_LIMIT_BURST` |
+
+Throttled requests receive HTTP `429 Too Many Requests`:
+```json
+{
+  "error": "Rate limit exceeded",
+  "detail": "Too many requests from 203.0.113.5. Retry after 12.4 seconds.",
+  "retry_after_seconds": 12.4
+}
+```
+
+Response headers included with every throttled response:
+
+| Header | Description |
+| :--- | :--- |
+| `Retry-After` | Integer seconds until the client may safely retry |
+| `X-RateLimit-Limit` | Configured per-minute request ceiling |
+| `X-RateLimit-Remaining` | Current remaining token count |
+| `X-RateLimit-Reset` | Unix timestamp when the rate window resets |
+
 ---
 
 ## Endpoint Reference
@@ -236,7 +262,8 @@ curl -X POST "http://localhost:8000/api/analyze/html" \
 - **Parameters**:
   - `files` (Multiple binary parts, required): Array of files to process.
   - Query parameters matching single-file analysis.
-- **Response**: Aggregated JSON array containing individual analysis objects or localized error objects for corrupted items.
+- **Description**: Concurrently processes all uploaded files using `asyncio.gather`. Each file is dispatched to a separate thread via `run_in_threadpool`, enabling true parallel CPU-bound analysis. Per-file errors are isolated; a failure in one file does not abort the rest of the batch. Results preserve input order.
+- **Response**: Aggregated JSON array containing individual analysis objects or localized error objects for failed items.
 
 #### cURL Request Example
 ```bash

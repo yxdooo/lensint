@@ -1,14 +1,16 @@
 """High-Performance, Hardened FastAPI REST API & Web UI Server for LENSINT."""
 from __future__ import annotations
 
+import asyncio
 import html
 import os
 import re
 import tempfile
+import time
 from typing import List, Optional
-from fastapi import FastAPI, File, Header, HTTPException, Query, Security, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -23,6 +25,97 @@ app = FastAPI(
     description="Automated digital image forensics, AI detection, and threat intelligence REST API",
     version=__version__,
 )
+
+
+# ---------------------------------------------------------------------------
+# Token-Bucket Rate Limiter
+# ---------------------------------------------------------------------------
+
+class _TokenBucket:
+    """Thread-safe token-bucket rate limiter per client key."""
+
+    def __init__(self, rate: float, capacity: int) -> None:
+        self.rate = rate          # tokens per second
+        self.capacity = capacity  # burst ceiling
+        self._buckets: dict = {}
+
+    def _get_bucket(self, key: str) -> list:
+        if key not in self._buckets:
+            self._buckets[key] = [float(self.capacity), time.monotonic()]
+        return self._buckets[key]
+
+    def consume(self, key: str, tokens: int = 1):
+        """Try to consume tokens from the bucket.
+
+        Returns: (allowed: bool, retry_after: float, remaining: int)
+        """
+        bucket = self._get_bucket(key)
+        now = time.monotonic()
+        elapsed = now - bucket[1]
+        bucket[1] = now
+        bucket[0] = min(self.capacity, bucket[0] + elapsed * self.rate)
+
+        remaining = int(bucket[0])
+        if bucket[0] >= tokens:
+            bucket[0] -= tokens
+            return True, 0.0, max(0, remaining - tokens)
+        retry_after = (tokens - bucket[0]) / self.rate
+        return False, retry_after, 0
+
+    def evict_stale(self, max_age_seconds: float = 300.0) -> None:
+        """Remove idle buckets to prevent unbounded memory growth."""
+        now = time.monotonic()
+        stale = [k for k, v in self._buckets.items() if now - v[1] > max_age_seconds]
+        for k in stale:
+            del self._buckets[k]
+
+
+# 30 requests/minute per IP, burst of 10 (configurable via env vars)
+_RATE_LIMIT_PER_MINUTE = int(os.getenv("LENSINT_RATE_LIMIT_PER_MIN", "30"))
+_RATE_LIMIT_BURST = int(os.getenv("LENSINT_RATE_LIMIT_BURST", "10"))
+_rate_limiter = _TokenBucket(
+    rate=_RATE_LIMIT_PER_MINUTE / 60.0,
+    capacity=_RATE_LIMIT_BURST,
+)
+
+
+def _get_client_key(request: Request) -> str:
+    """Derive a rate-limit key from the real client IP."""
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(request: Request):
+    """Check rate limit; return a 429 Response if exceeded, else None.
+
+    Rate limiting is only active when LENSINT_API_KEY is configured, so
+    unauthenticated local development usage is never throttled.
+    """
+    if not API_KEY_ENV:
+        return None
+    key = _get_client_key(request)
+    allowed, retry_after, remaining = _rate_limiter.consume(key)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "Rate limit exceeded",
+                "detail": (
+                    f"Too many requests from {key}. "
+                    f"Retry after {retry_after:.1f} seconds."
+                ),
+                "retry_after_seconds": round(retry_after, 1),
+            },
+            headers={
+                "Retry-After": str(int(retry_after) + 1),
+                "X-RateLimit-Limit": str(_RATE_LIMIT_PER_MINUTE),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(time.time() + retry_after)),
+            },
+        )
+    return None
 
 # Hardened CORS configuration
 cors_env = os.getenv("LENSINT_CORS_ORIGINS", "").strip()
@@ -128,6 +221,8 @@ def healthcheck():
         "service": "lensint-api",
         "version": __version__,
         "auth_enabled": bool(API_KEY_ENV),
+        "rate_limit_per_minute": _RATE_LIMIT_PER_MINUTE,
+        "rate_limit_burst": _RATE_LIMIT_BURST,
         "cors_origins": allowed_origins,
         "config": config.to_dict(),
     }
@@ -150,6 +245,7 @@ from starlette.concurrency import run_in_threadpool
 
 @app.post("/api/analyze")
 async def analyze_image_json(
+    request: Request,
     file: UploadFile = File(...),
     ela_quality: int = Query(90, ge=1, le=100),
     geo_lookup: bool = Query(False),
@@ -159,6 +255,9 @@ async def analyze_image_json(
     authorization: Optional[str] = Header(None),
 ):
     _verify_api_key(x_api_key, authorization)
+    rate_limit_response = _check_rate_limit(request)
+    if rate_limit_response is not None:
+        return rate_limit_response
     try:
         result = await run_in_threadpool(
             _process_upload_streaming, file, ela_quality, geo_lookup, generate_visuals, use_cache
@@ -172,6 +271,7 @@ async def analyze_image_json(
 
 @app.post("/api/analyze/html", response_class=HTMLResponse)
 async def analyze_image_html(
+    request: Request,
     file: UploadFile = File(...),
     ela_quality: int = Query(90, ge=1, le=100),
     geo_lookup: bool = Query(True),
@@ -181,6 +281,9 @@ async def analyze_image_html(
     authorization: Optional[str] = Header(None),
 ):
     _verify_api_key(x_api_key, authorization)
+    rate_limit_response = _check_rate_limit(request)
+    if rate_limit_response is not None:
+        return rate_limit_response
     try:
         result = await run_in_threadpool(
             _process_upload_streaming, file, ela_quality, geo_lookup, generate_visuals, use_cache
@@ -194,6 +297,7 @@ async def analyze_image_html(
 
 @app.post("/api/analyze/pdf")
 async def analyze_image_pdf(
+    request: Request,
     file: UploadFile = File(...),
     case_id: str = Query("CASE-2026-DFIR-001"),
     examiner: str = Query("Senior Digital Forensic Examiner"),
@@ -204,6 +308,9 @@ async def analyze_image_pdf(
 ):
     """Generate and download an official Courtroom Expert Witness PDF Forensic Report."""
     _verify_api_key(x_api_key, authorization)
+    rate_limit_response = _check_rate_limit(request)
+    if rate_limit_response is not None:
+        return rate_limit_response
     try:
         from lensint.reporters.expert_pdf import generate_expert_witness_pdf
         result = await run_in_threadpool(
@@ -232,6 +339,7 @@ async def analyze_image_pdf(
 
 @app.post("/api/analyze/batch")
 async def analyze_batch(
+    request: Request,
     files: List[UploadFile] = File(...),
     ela_quality: int = Query(90, ge=1, le=100),
     geo_lookup: bool = Query(False),
@@ -240,18 +348,29 @@ async def analyze_batch(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Analyze multiple images in one request with streaming safety."""
+    """Analyze multiple images concurrently using asyncio.gather for true parallelism.
+
+    Each file is processed in a separate thread via run_in_threadpool so CPU-bound
+    analysis steps run in parallel rather than sequentially. Errors in individual
+    files are isolated and do not abort the rest of the batch.
+    """
     _verify_api_key(x_api_key, authorization)
-    results = []
-    for file in files:
+    rate_limit_response = _check_rate_limit(request)
+    if rate_limit_response is not None:
+        return rate_limit_response
+
+    async def _analyze_one(file: UploadFile) -> dict:
         try:
             result = await run_in_threadpool(
                 _process_upload_streaming, file, ela_quality, geo_lookup, generate_visuals, use_cache
             )
-            results.append(result.to_dict())
+            return result.to_dict()
         except Exception as e:
-            results.append({"error": str(e), "filename": file.filename})
-    return JSONResponse(content={"results": results, "count": len(results)})
+            return {"error": str(e), "filename": file.filename}
+
+    # Concurrently process all files; results preserve input order
+    results = await asyncio.gather(*(_analyze_one(f) for f in files))
+    return JSONResponse(content={"results": list(results), "count": len(results)})
 
 
 @app.get("/api/cache/stats")

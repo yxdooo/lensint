@@ -9,6 +9,7 @@
 [![MISP](https://img.shields.io/badge/MISP-Event%20Ready-red.svg)](https://www.misp-project.org/)
 [![YARA](https://img.shields.io/badge/YARA-Auto%20Generator-orange.svg)](https://virustotal.github.io/yara/)
 [![Tests](https://img.shields.io/badge/tests-134%20passed-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/version-3.5.0-informational.svg)](pyproject.toml)
 
 LENSINT is an enterprise-grade digital image and video forensics, steganographic payload extraction, network packet stream carving, and multi-modal threat intelligence analysis framework. Engineered for cybercrime investigation units (Law Enforcement, Europol, Interpol, Federal Agencies), accredited digital forensics and incident response (DFIR) laboratories, intelligence communities, and court-appointed expert witnesses, the system integrates:
 
@@ -16,11 +17,11 @@ LENSINT is an enterprise-grade digital image and video forensics, steganographic
 - Camera sensor hardware attribution via Photo-Response Non-Uniformity (PRNU) 1:N MLE matching and microscopic Sensor Dust Invariant Mapping with bipartite matching ($P_{\text{FA}} < 10^{-5}$).
 - Brown-Conrady optical lens distortion profiling ($k_1, k_2, p_1, p_2$) for separating physical optical glass from rectilinear AI/CGI imagery.
 - C2PA / CAI Content Provenance and Authenticity verification (ISO/IEC 19566-5 JUMBF container parsing, CBOR decoding, COSE Sign1 RFC 9052 cryptographic signature validation, X.509 certificate chains, asset binding hash validation, and anti-forensics stripping detection).
-- Biometric remote Photoplethysmography (rPPG) video deepfake detection (CHROM and POS sub-visual cardiovascular pulse extraction at 0.7-3.5 Hz / 42-210 BPM, FFT PSD SNR, multi-region facial phase coherence, Eye Aspect Ratio Poisson blink cadence, and 3D corneal reflection divergence).
+- Biometric remote Photoplethysmography (rPPG) video deepfake detection (CHROM and POS sub-visual cardiovascular pulse extraction at 0.7–3.5 Hz / 42–210 BPM, FFT PSD SNR, multi-region facial phase coherence, Eye Aspect Ratio Poisson blink cadence, and 3D corneal reflection divergence).
 - Deep neural and modern content-adaptive spatial steganalysis (Spatial Rich Model with 30 directional residual convolutions for S-UNIWARD, WOW, HILL, and MiPOD; Steghide PoV symmetry convergence; OpenPuff 8-bitplane Shannon entropy flatness).
 - Live network PCAP/PCAPNG packet stream ingestion, bidirectional TCP stream reassembly state machine, and automated HTTP/1.1, HTTP/2 multipart payload, and SMB2/SMB3 multimedia carvers (`--pcap`).
 - Meta PDQ 256-bit perceptual hashing and metric space Burkhard-Keller tree (BK-Tree) triage indexing.
-- Pure-Python Baseline JPEG DCT (SOF0) engine with DRI / RST0-RST7 restart marker resynchronization and C2 frequency decoders (JSteg, F5, OutGuess, Westfeld $\chi^2$, Calibrated RS Steganalysis).
+- Pure-Python Baseline JPEG DCT (SOF0) engine with DRI / RST0–RST7 restart marker resynchronization and C2 frequency decoders (JSteg, F5, OutGuess, Westfeld $\chi^2$, Calibrated RS Steganalysis).
 - Volatile memory dump stream carving and official Volatility 3 VAD plugin (`windows.lensint_carve`).
 - Calibrated Bayesian log-odds risk fusion engine with correlation group attenuation.
 - Courtroom-admissible PDF expert witness reporting compliant with Federal Rules of Evidence (FRE 702/901), ISO/IEC 27037:2012 chained audit ledgers, and RFC 3161 Time-Stamp Authority (TSA) attestation.
@@ -72,11 +73,11 @@ The following diagram illustrates the end-to-end multi-layer ingestion, concurre
          |                                         |                                         |
          +-----------------------------------------+-----------------------------------------+
                                                    |
-                                 +-----------------v------------------+
-                                 |   Calibrated Bayesian Log-Odds     |
-                                 |   Fusion Engine (P0, TPR, FPR, a)  |
-                                 +-----------------+------------------+
-                                                   |
+                           +---------------+--------v--------+---------------+
+                           |               |                 |               |
+                    Dynamic Thread   asyncio.gather    Bayesian Log-    Module Timeout
+                    Pool (cpu_count) Parallel Batch    Odds Fusion      Guard (120 s)
+                           |               |                 |               |
                                  +-----------------v------------------+
                                  |  ISO/IEC 27037 Chained Audit Trail |
                                  |  & RFC 3161 TSA Timestamp Seal     |
@@ -156,7 +157,7 @@ The following diagram illustrates the end-to-end multi-layer ingestion, concurre
 - **Zero-Knowledge Privacy Mode**: Allows forensic investigators to identify illicit media matches without exposing sensitive visual content on monitor screens.
 
 ### 10. Classical C2 Steganography and Pure-Python DCT Engine (`lensint.modules.jpeg_dct`, `lensint.modules.c2_stego_decoders`)
-- **Pure-Python Baseline JPEG DCT Engine (`jpeg_dct.py`)**: Full Huffman table construction and entropy-coded scan decoding for Baseline Sequential JPEGs (SOF0), featuring DRI (Define Restart Interval) and RST0-RST7 restart marker handling with sub-byte bit alignment reset and DC predictor synchronization.
+- **Pure-Python Baseline JPEG DCT Engine (`jpeg_dct.py`)**: Full Huffman table construction and entropy-coded scan decoding for Baseline Sequential JPEGs (SOF0), featuring DRI (Define Restart Interval) and RST0–RST7 restart marker handling with sub-byte bit alignment reset and DC predictor synchronization.
 - **JSteg DCT Extractor**: Recovers LSB payloads embedded in non-zero AC DCT coefficients ($\neq 0, \pm 1$) and measures Shannon entropy.
 - **F5 Matrix Embedding Analyzer**: Computes $(1, 2^k - 1, k)$ embedding capacity from non-zero AC coefficients and quantifies histogram shrinkage.
 - **OutGuess 0.2 Statistical Symmetry Analyzer**: Evaluates histogram symmetry preservation anomalies across Pairs of Values (PoVs).
@@ -169,16 +170,17 @@ The following diagram illustrates the end-to-end multi-layer ingestion, concurre
 - **Multi-Scale Error Level Analysis (ELA)**: Evaluates compression disparity across calibrated JPEG qualities ($Q \in \{80, 90, 95\}$) and identifies localized editing via 32x32 block discrepancy ($P_{95} - \text{Median}$).
 - **Copy-Move Cloning Detection**: Extracts ORB keypoint descriptors with BFMatcher k-NN ($k=3$), Lowe's ratio test ($0.75$), spatial separation constraints ($>40$ px), and RANSAC affine inlier verification, reinforced by 16x16 block DCT lexicographical sorting.
 - **JPEG Ghost Detection**: Scans recompression curves across $Q \in [50..95]$ with step 5 to identify spliced fragments originating from disparate compression generations.
-- **DQT Hardware Fingerprinting**: Matches $8 \times 8$ luminance/chrominance quantization matrices against hardware camera profiles (Apple iPhone 11-16 Pro, Samsung Galaxy S20-S24 Ultra, Google Pixel 6-9 Pro, Canon EOS, Nikon D/Z, Sony Alpha, DJI Drones) and editing software (Adobe Photoshop, Lightroom, GIMP, Canva).
+- **DQT Hardware Fingerprinting**: Matches $8 \times 8$ luminance/chrominance quantization matrices against hardware camera profiles (Apple iPhone 11–16 Pro, Samsung Galaxy S20–S24 Ultra, Google Pixel 6–9 Pro, Canon EOS, Nikon D/Z, Sony Alpha, DJI Drones) and editing software (Adobe Photoshop, Lightroom, GIMP, Canva).
 - **CFA Bayer Demosaicing**: Evaluates RGGB color filter array interpolation continuity to expose splicing.
 - **8x8 DCT Block Grid Shift**: Detects misaligned patch insertions where the local grid phase does not match the global JPEG boundary ($(dx, dy) \neq (0,0)$).
 - **Radial Chromatic Aberration Vectors**: Quantifies radial optical dispersion convergence across image quadrants to detect composites photographed with different lenses.
 - **Illumination Surface Normal Vectors**: Analyzes 2D gradient circular statistics ($\text{atan2}(I_y, I_x)$) to uncover lighting direction conflicts.
 
 ### 12. Neural AI, Deepfake Detection, and Feature Extraction (`lensint.modules.neural_ai`)
-- **ONNX Model Inference**: Executes neural forensic classifiers (`TruFor`, `CNNDetection`, Swin-Transformer) via ONNX Runtime with strict SHA-256 hash manifest verification.
+- **ONNX Model Inference**: Executes neural forensic classifiers (`TruFor`, `CNNDetection`, Swin-Transformer) via ONNX Runtime with strict SHA-256 hash manifest verification, dynamic tensor layout negotiation (NCHW/NHWC), and int8/float16 quantization support.
 - **Academic Feature Extraction**: Computes Laplacian noise energy, spatial gradient curvature, inter-channel chrominance correlation ($r_{RG}$), and 2D-FFT spectral periodicity for GAN upsampling grids and diffusion footprints.
 - **Prompt Injection Scanner**: Regex engine scanning EXIF/PNG metadata and OCR text for adversarial LLM jailbreak vectors (`Ignore previous instructions`, `DAN mode`).
+- **Model Manager (`lensint.model_manager`)**: Provides structured validation of the model manifest, actionable error messages when the model or manifest is absent, SHA-256 integrity checks, and automatic skeleton generation (`lensint model-setup`).
 
 ### 13. Calibrated Bayesian Risk Fusion and Benchmarking (`lensint.modules.benchmarks`)
 - **Log-Odds Bayesian Fusion Engine**: Configurable prior probability $P_0$ (triage: 0.20, courtroom: 0.50, sandbox: 0.75) with two-sided likelihood ratios and correlation group attenuation ($1 / (1 + 1.5 \cdot c_g)$) to eliminate probability inflation from correlated compression indicators.
@@ -200,8 +202,9 @@ The following diagram illustrates the end-to-end multi-layer ingestion, concurre
 
 ### Prerequisites
 - Python 3.9 or higher
-- C/C++ compiler and CMake (for optional accelerated libraries)
 - Tesseract OCR engine (optional, for visual credential extraction)
+- OpenCV (optional, for Copy-Move and rPPG analysis — installed via the `[cv]` extra)
+- ONNX Runtime (optional, for neural deepfake inference — `pip install onnxruntime`)
 
 ### Installation Steps
 
@@ -210,12 +213,21 @@ The following diagram illustrates the end-to-end multi-layer ingestion, concurre
 git clone https://github.com/yxdooo/lensint.git
 cd lensint
 
-# Install standard distribution
+# Install core distribution
 pip install -e .
 
-# Install with all extensions (FastAPI, OpenCV, ReportLab, Volatility 3, Pytest)
+# Install with all optional extensions (FastAPI, OpenCV, cryptography, dev tools)
 pip install -e ".[all]"
 ```
+
+### Optional Dependency Groups
+
+| Group | Command | Adds |
+| :--- | :--- | :--- |
+| `server` | `pip install -e ".[server]"` | FastAPI, Uvicorn, python-multipart, httpx |
+| `cv` | `pip install -e ".[cv]"` | OpenCV, SciPy (Copy-Move, rPPG) |
+| `crypto` | `pip install -e ".[crypto]"` | cbor2, cryptography (C2PA / COSE) |
+| `all` | `pip install -e ".[all]"` | All of the above + dev tools |
 
 ---
 
@@ -251,6 +263,14 @@ pip install -e ".[all]"
 | `--batch` | None | Process all supported image and video files within target directory |
 | `-q`, `--quiet` | None | Suppress detailed console tables and output only final forensic verdict |
 
+### Special Sub-Commands
+
+| Sub-command | Description |
+| :--- | :--- |
+| `lensint serve [--host HOST] [--port PORT]` | Start the FastAPI REST API and Web UI server |
+| `lensint model-info` | Display ONNX neural pipeline status, model name, and any configuration issues |
+| `lensint model-setup [PATH]` | Generate a `manifest.json` skeleton in the model directory (pre-fills SHA-256 if model file exists) |
+
 ### Usage Examples
 
 #### 1. Official Courtroom Expert Witness Examination (ISO/IEC 27037 & RFC 3161)
@@ -264,7 +284,7 @@ lensint evidence.jpg \
   --tsa-server "https://freetsa.org/tsr"
 ```
 
-#### 2. Network PCAP/PCAPNG Packet Stream Multimedia Carving (`--pcap`)
+#### 2. Network PCAP/PCAPNG Packet Stream Multimedia Carving
 ```bash
 lensint --pcap /captures/network_traffic.pcapng --out-dir /carved_network_media/
 ```
@@ -302,28 +322,65 @@ lensint --watch-dir /var/log/suricata/extracted_files/
 lensint serve --host 0.0.0.0 --port 8000
 ```
 
+#### 9. Neural ONNX Pipeline Setup
+```bash
+# Check current model configuration status
+lensint model-info
+
+# Generate a manifest.json skeleton in ~/.lensint/models/
+lensint model-setup
+
+# Generate skeleton at a custom path
+lensint model-setup /opt/lensint/models/manifest.json
+```
+
 ---
 
 ## REST API Reference
 
-LENSINT provides a high-performance REST API powered by FastAPI.
+LENSINT provides a high-performance asynchronous REST API powered by FastAPI and Uvicorn.
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/health` | Service health status, version, and active configuration summary |
+| `GET` | `/health` | Service health status, version, rate-limit config, and active configuration summary |
 | `GET` | `/` | Serves the interactive drag-and-drop web UI |
 | `POST` | `/api/analyze` | Analyzes uploaded media file and returns complete JSON forensic report |
 | `POST` | `/api/analyze/html` | Analyzes uploaded media file and streams standalone interactive HTML report |
 | `POST` | `/api/analyze/pdf` | Generates and streams official Courtroom Expert Witness PDF report |
-| `POST` | `/api/analyze/batch` | Concurrently processes multiple uploaded files with error isolation |
+| `POST` | `/api/analyze/batch` | **Concurrently** processes multiple uploaded files via `asyncio.gather` with per-file error isolation |
 | `GET` | `/api/cache/stats` | Inspects SHA-256 forensic cache utilization and disk footprint |
 | `DELETE` | `/api/cache` | Purges on-disk forensic result cache |
 
-### cURL API Example
+### Rate Limiting
+
+When `LENSINT_API_KEY` is configured, all analysis endpoints enforce a **token-bucket rate limiter** per client IP address:
+
+| Parameter | Default | Environment Variable |
+| :--- | :--- | :--- |
+| Requests per minute | `30` | `LENSINT_RATE_LIMIT_PER_MIN` |
+| Burst tolerance | `10` | `LENSINT_RATE_LIMIT_BURST` |
+
+Throttled requests receive HTTP `429 Too Many Requests` with `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` headers. Rate limiting is automatically disabled in open (unauthenticated) mode.
+
+### cURL API Examples
 ```bash
+# Single file analysis
 curl -X POST "http://localhost:8000/api/analyze?generate_visuals=false&geo_lookup=true" \
      -H "X-API-Key: YOUR_SECRET_KEY" \
      -F "file=@evidence.jpg"
+
+# Concurrent batch analysis
+curl -X POST "http://localhost:8000/api/analyze/batch" \
+     -H "X-API-Key: YOUR_SECRET_KEY" \
+     -F "files=@evidence_01.jpg" \
+     -F "files=@evidence_02.png" \
+     -F "files=@evidence_03.mp4"
+
+# Courtroom PDF report
+curl -X POST "http://localhost:8000/api/analyze/pdf?case_id=CASE-2026-CRIM-9912&examiner=Dr.+Alice+Vance" \
+     -H "X-API-Key: YOUR_SECRET_KEY" \
+     -F "file=@evidence.jpg" \
+     --output "Courtroom_Expert_Report.pdf"
 ```
 
 ---
@@ -333,12 +390,17 @@ curl -X POST "http://localhost:8000/api/analyze?generate_visuals=false&geo_looku
 LENSINT includes a comprehensive test suite covering all forensic modules, mathematical algorithms, parsers, and reporting pipelines.
 
 ```bash
-# Execute test suite
+# Execute complete test suite
 pytest tests/ -v
 
 # Run with test coverage metrics
 pytest --cov=lensint tests/ -v
+
+# Run a specific module test
+pytest tests/test_tampering.py -v
 ```
+
+**Current status: 134 passed / 134 collected.**
 
 ---
 
@@ -346,15 +408,18 @@ pytest --cov=lensint tests/ -v
 
 Detailed technical specifications and module references are available in the `docs/` directory:
 
-- [REST API Specification](docs/api.md): Endpoints, schemas, authentication, and integration examples.
+- [REST API Specification](docs/api.md): Endpoints, schemas, authentication, rate limiting, and integration examples.
 - [System Architecture](docs/architecture.md): Pipeline data flow, Bayesian fusion formulas, and mathematical models.
 - [Audit & Chain of Custody](docs/audit_and_chain_of_custody.md): ISO/IEC 27037 ledger chaining, RFC 3161 TSP, and FRE 702 Daubert admissibility.
 - [CLI User Manual](docs/cli.md): Comprehensive parameter guide, incident response scenarios, and usage patterns.
-- [Configuration Guide](docs/configuration.md): Environment variables, ONNX model manifest schema, and deployment settings.
+- [Configuration Guide](docs/configuration.md): Environment variables, ONNX model manifest schema, rate limiting, and deployment settings.
 - [Forensic Modules Reference](docs/modules.md): In-depth algorithms, mathematical formulations, and engineering mechanics for every module.
+- [Contributing Guide](docs/contributing.md): Development environment setup, code quality standards, and pull request workflow.
 
 ---
 
 ## License
 
 Distributed under the **MIT License**. See `LICENSE` for complete terms and conditions.
+
+

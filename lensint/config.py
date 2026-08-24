@@ -58,6 +58,11 @@ class LensintConfig:
     audit_log_dir: Path = field(default_factory=lambda: Path(os.getenv("LENSINT_AUDIT_DIR", str(Path.home() / ".lensint" / "audit"))))
     log_level: str = field(default_factory=lambda: os.getenv("LENSINT_LOG_LEVEL", "INFO").upper())
 
+    # ONNX Neural Model Directory
+    onnx_model_dir: Optional[str] = field(
+        default_factory=lambda: os.getenv("LENSINT_ONNX_MODEL_DIR", "")
+    )
+
     # Geocoding Service
     nominatim_user_agent: str = field(default_factory=lambda: os.getenv("LENSINT_USER_AGENT", "lensint-forensics-agent/2.5"))
     geolookup_timeout_seconds: int = field(default_factory=lambda: int(os.getenv("LENSINT_GEOLOOKUP_TIMEOUT", "3")))

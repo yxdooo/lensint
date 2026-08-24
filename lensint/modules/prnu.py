@@ -34,24 +34,26 @@ class PRNUReport:
 def extract_noise_residual(pil_img: Image.Image, target_size: Tuple[int, int] = (512, 512)) -> np.ndarray:
     """
     Extract high-frequency PRNU camera sensor noise residual W = I - F(I) from image.
-    Uses an adaptive 8-neighborhood spatial/wavelet Wiener filter approximation.
+    Uses an adaptive spatial Wiener denoising filter with non-PRNU linear artifact suppression.
     """
     if pil_img is None:
         return np.zeros(target_size, dtype=np.float32)
 
-    # Standardize to grayscale and fixed evaluation window (or native center crop)
+    # Standardize to grayscale and fixed evaluation window (native center crop / pad)
     w, h = pil_img.size
     if w >= target_size[0] and h >= target_size[1]:
         left = (w - target_size[0]) // 2
         top = (h - target_size[1]) // 2
         crop = pil_img.crop((left, top, left + target_size[0], top + target_size[1])).convert("L")
+        arr = np.array(crop, dtype=np.float32)
     else:
-        crop = pil_img.resize(target_size, Image.Resampling.LANCZOS).convert("L")
+        # Avoid destructive sinc interpolation: pad with reflection to preserve physical pixel noise
+        raw_arr = np.array(pil_img.convert("L"), dtype=np.float32)
+        pad_y = max(0, target_size[1] - raw_arr.shape[0])
+        pad_x = max(0, target_size[0] - raw_arr.shape[1])
+        arr = np.pad(raw_arr, ((0, pad_y), (0, pad_x)), mode="reflect")[:target_size[1], :target_size[0]]
 
-    arr = np.array(crop, dtype=np.float32)
-
-    # 2D Local Wiener / Mihcak adaptive denoising filter approximation
-    # F(I) = mu + (sigma_s^2 / (sigma_s^2 + sigma_n^2)) * (I - mu)
+    # 2D Local Wiener / Mihcak adaptive denoising filter
     padded = np.pad(arr, 2, mode="reflect")
     # 5x5 window local mean and variance
     windows = []
@@ -62,15 +64,29 @@ def extract_noise_residual(pil_img: Image.Image, target_size: Tuple[int, int] = 
     local_mean = np.mean(stack, axis=0)
     local_var = np.var(stack, axis=0)
 
-    noise_var_estimate = float(np.median(local_var)) + 1e-4
+    # High-frequency noise variance estimation using robust median absolute deviation
+    laplacian = np.abs(
+        arr[1:-1, 1:-1] * 4
+        - arr[:-2, 1:-1]
+        - arr[2:, 1:-1]
+        - arr[1:-1, :-2]
+        - arr[1:-1, 2:]
+    )
+    sigma_noise = float(np.median(laplacian)) / 0.6745 if laplacian.size > 0 else 3.0
+    noise_var_estimate = max(1.0, sigma_noise ** 2)
+
     weight = np.maximum(0.0, local_var - noise_var_estimate) / (local_var + 1e-6)
     denoised = local_mean + weight * (arr - local_mean)
 
     # Noise residual W = I - F(I)
     noise_residual = arr - denoised
-    # Zero-mean normalization
-    noise_residual -= np.mean(noise_residual)
-    std_res = np.std(noise_residual)
+
+    # Non-PRNU linear artifact suppression (zero-mean rows and columns to suppress JPEG/CMOS readout lines)
+    noise_residual -= np.mean(noise_residual, axis=1, keepdims=True)
+    noise_residual -= np.mean(noise_residual, axis=0, keepdims=True)
+
+    # Zero-mean and unit variance normalization
+    std_res = float(np.std(noise_residual))
     if std_res > 1e-6:
         noise_residual /= std_res
 
@@ -94,13 +110,15 @@ def compute_pce(residual: np.ndarray, reference_fingerprint: np.ndarray) -> Tupl
     normalized_cross = cross_power / norm
 
     corr_map = np.real(np.fft.ifft2(normalized_cross))
-    corr_map_sq = corr_map ** 2
+    # Center correlation map to handle toroidal peak symmetry cleanly
+    corr_map_centered = np.fft.fftshift(corr_map)
+    corr_map_sq = corr_map_centered ** 2
 
     # Find peak location
     max_idx = np.unravel_index(np.argmax(corr_map_sq), corr_map_sq.shape)
     peak_val = float(corr_map_sq[max_idx])
 
-    # Exclude 11x11 neighborhood around peak to calculate baseline noise energy
+    # Exclude 11x11 neighborhood around centered peak to calculate baseline noise energy
     h, w = corr_map_sq.shape
     mask = np.ones((h, w), dtype=bool)
     py, px = max_idx
@@ -153,15 +171,36 @@ class PRNUDatabase:
         if not image_list:
             raise ValueError("At least 1 calibration image is required.")
 
-        accum_w = np.zeros(target_size, dtype=np.float64)
+        accum_wi = np.zeros(target_size, dtype=np.float64)
+        accum_i2 = np.zeros(target_size, dtype=np.float64)
+
         for img in image_list:
             w = extract_noise_residual(img, target_size=target_size)
-            accum_w += w
+            w_img, h_img = img.size
+            if w_img >= target_size[0] and h_img >= target_size[1]:
+                left = (w_img - target_size[0]) // 2
+                top = (h_img - target_size[1]) // 2
+                crop = img.crop((left, top, left + target_size[0], top + target_size[1])).convert("L")
+                arr_i = np.array(crop, dtype=np.float64)
+            else:
+                raw_i = np.array(img.convert("L"), dtype=np.float64)
+                pad_y = max(0, target_size[1] - raw_i.shape[0])
+                pad_x = max(0, target_size[0] - raw_i.shape[1])
+                arr_i = np.pad(raw_i, ((0, pad_y), (0, pad_x)), mode="reflect")[:target_size[1], :target_size[0]]
 
-        mle_fingerprint = (accum_w / float(len(image_list))).astype(np.float32)
-        # Normalize
-        mle_fingerprint -= np.mean(mle_fingerprint)
-        s = np.std(mle_fingerprint)
+            # Normalized intensity [0, 1]
+            norm_i = arr_i / 255.0
+            accum_wi += (w * norm_i)
+            accum_i2 += (norm_i ** 2)
+
+        accum_i2[accum_i2 < 1e-4] = 1.0
+        mle_fingerprint = (accum_wi / accum_i2).astype(np.float32)
+
+        # Suppress non-PRNU row/column linear patterns
+        mle_fingerprint -= np.mean(mle_fingerprint, axis=1, keepdims=True)
+        mle_fingerprint -= np.mean(mle_fingerprint, axis=0, keepdims=True)
+
+        s = float(np.std(mle_fingerprint))
         if s > 1e-6:
             mle_fingerprint /= s
 
@@ -174,49 +213,47 @@ class PRNUDatabase:
         pce_threshold: float = 60.0,
         target_size: Tuple[int, int] = (512, 512),
     ) -> PRNUReport:
-        """Query 1:N device database to identify suspect device matching image's sensor noise."""
-        rep = PRNUReport()
-        if pil_img is None:
-            return rep
+        """Match unknown image against all registered suspect camera device fingerprints."""
+        report = PRNUReport()
+        if pil_img is None or not self.devices:
+            return report
 
         residual = extract_noise_residual(pil_img, target_size=target_size)
-        rep.fingerprint_extracted = True
-        rep.noise_residual_energy = round(float(np.var(residual)), 4)
+        report.fingerprint_extracted = True
+        report.noise_residual_energy = round(float(np.var(residual)), 4)
 
         best_pce = 0.0
-        best_dev: Optional[str] = None
         best_far = 1.0
+        best_device = None
 
         for dev_id, dev_data in self.devices.items():
-            ref_fp = dev_data["fingerprint"]
-            pce_val, far_val = compute_pce(residual, ref_fp)
-            if pce_val > best_pce:
-                best_pce = pce_val
-                best_dev = dev_id
-                best_far = far_val
+            ref = dev_data["fingerprint"]
+            pce, far = compute_pce(residual, ref)
+            if pce > best_pce:
+                best_pce = pce
+                best_far = far
+                best_device = dev_id
 
-        rep.peak_to_correlation_energy = best_pce
-        rep.false_alarm_rate_estimate = best_far
+        report.peak_to_correlation_energy = best_pce
+        report.false_alarm_rate_estimate = best_far
 
-        if best_dev and best_pce >= pce_threshold:
-            rep.is_device_matched = True
-            rep.matched_device_id = best_dev
-            dev_info = self.devices[best_dev]
-            rep.details = {
-                "device_id": best_dev,
-                "model": dev_info.get("model", ""),
-                "owner": dev_info.get("owner", ""),
+        if best_pce >= pce_threshold and best_device:
+            report.is_device_matched = True
+            report.matched_device_id = best_device
+            dev_info = self.devices[best_device]
+            report.details = {
+                "matched_device_id": best_device,
+                "model": dev_info.get("model", "Unknown"),
                 "pce": best_pce,
-                "far": f"{best_far:.2e}",
-                "courtroom_verdict": "DEFINITIVE_SENSOR_MATCH",
+                "far": best_far,
             }
-            rep.findings.append(
-                f"PRNU Sensor Match: Image originated from registered device '{best_dev}' ({dev_info.get('model')}) "
-                f"with PCE {best_pce:.1f} (PCE threshold: {pce_threshold}, FAR: {best_far:.2e})."
+            report.findings.append(
+                f"Camera PRNU Device Match: Identifies suspect device '{best_device}' "
+                f"({dev_info.get('model', 'Unknown')}) with PCE={best_pce:.1f} (PCE Threshold: {pce_threshold}, FAR: {best_far:.2e})."
             )
-        elif best_dev and best_pce >= 30.0:
-            rep.findings.append(
-                f"PRNU Sensor Inconclusive: Moderate correlation with '{best_dev}' (PCE: {best_pce:.1f}, below definitive threshold {pce_threshold})."
+        elif best_pce > 20.0 and best_device:
+            report.findings.append(
+                f"Inconclusive PRNU Correlation: Weak peak PCE={best_pce:.1f} detected against '{best_device}' (Below courtroom standard PCE {pce_threshold})."
             )
 
-        return rep
+        return report

@@ -78,6 +78,43 @@ def _build_rfc3161_request_der(sha256_hex: str) -> bytes:
     return ts_req_der
 
 
+def _parse_tsa_response(resp_der: bytes) -> Tuple[bool, str, Optional[str], Optional[str]]:
+    """
+    Parse and validate RFC 3161 TimeStampResp ASN.1 sequence.
+    Verifies PKIStatusInfo integer == 0 (granted) or 1 (grantedWithMods)
+    and extracts GeneralizedTime tag 0x18.
+    """
+    if len(resp_der) < 16 or resp_der[0] != 0x30:
+        return False, "INVALID_DER", None, None
+
+    try:
+        # Check PKIStatus INTEGER (must be 0 or 1)
+        status_idx = resp_der.find(b"\x02\x01")
+        if status_idx != -1 and status_idx < 16:
+            pki_status = resp_der[status_idx + 2]
+            if pki_status not in (0, 1):
+                return False, f"REJECTED_BY_TSA (Code: {pki_status})", None, None
+
+        # Extract GeneralizedTime (ASN.1 tag 0x18, YYYYMMDDhhmmssZ)
+        gen_time_str = None
+        time_tag_idx = resp_der.find(b"\x18")
+        if time_tag_idx != -1 and time_tag_idx + 16 <= len(resp_der):
+            time_len = resp_der[time_tag_idx + 1]
+            if 13 <= time_len <= 19:
+                raw_time = resp_der[time_tag_idx + 2 : time_tag_idx + 2 + time_len].decode("ascii", errors="ignore")
+                if len(raw_time) >= 14 and raw_time.endswith("Z"):
+                    try:
+                        dt = datetime.strptime(raw_time[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+                        gen_time_str = dt.isoformat()
+                    except Exception:
+                        pass
+
+        serial_hex = hashlib.sha256(resp_der[:64]).hexdigest()[:16]
+        return True, "GRANTED", gen_time_str, serial_hex
+    except Exception as e:
+        return False, f"PARSING_ERROR: {e}", None, None
+
+
 def query_rfc3161_tsa(
     evidence_sha256: str,
     tsa_url: Optional[str] = None,
@@ -103,10 +140,10 @@ def query_rfc3161_tsa(
             with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
                 if resp.status == 200:
                     resp_der = resp.read()
-                    if len(resp_der) > 32:
-                        now_utc = datetime.now(timezone.utc).isoformat()
+                    valid, status_str, gen_time, serial = _parse_tsa_response(resp_der)
+                    if valid:
                         token_b64 = base64.b64encode(resp_der).decode("ascii")
-                        serial = hashlib.sha256(resp_der[:64]).hexdigest()[:16]
+                        now_utc = gen_time or datetime.now(timezone.utc).isoformat()
                         
                         return TimestampTokenReport(
                             status="GRANTED",
@@ -114,16 +151,17 @@ def query_rfc3161_tsa(
                             tsa_server=endpoint,
                             evidence_sha256=evidence_sha256,
                             token_der_b64=token_b64,
-                            serial_number=serial,
+                            serial_number=serial or "",
                             is_trusted_tsa=True,
                             details={
                                 "protocol": "RFC 3161 Time-Stamp Protocol",
                                 "response_length_bytes": len(resp_der),
+                                "pki_status": status_str,
                                 "verified": True,
                             },
                         )
         except Exception as e:
-            logger.debug(f"TSA server {endpoint} connection failed: {e}")
+            logger.debug(f"TSA server {endpoint} query failed: {e}")
             continue
 
     # Fallback to Air-gapped / Local Cryptographic Time Seal

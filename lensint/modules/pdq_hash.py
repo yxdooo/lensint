@@ -11,7 +11,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 @dataclass
@@ -29,19 +29,19 @@ class PDQReport:
         return asdict(self)
 
 
-def _dct_2d_matrix(n: int = 16) -> np.ndarray:
-    """Generate 1D DCT basis matrix for 2D separable transform."""
-    mat = np.zeros((n, n), dtype=np.float64)
-    for i in range(n):
-        for j in range(n):
+def _dct_16x64_matrix() -> np.ndarray:
+    """Generate 16x64 DCT projection basis matrix to compute 2D DCT from 64x64 down to 16x16."""
+    mat = np.zeros((16, 64), dtype=np.float64)
+    for i in range(16):
+        for j in range(64):
             if i == 0:
-                mat[i, j] = 1.0 / math.sqrt(n)
+                mat[i, j] = 1.0 / math.sqrt(64)
             else:
-                mat[i, j] = math.sqrt(2.0 / n) * math.cos((2 * j + 1) * i * math.pi / (2.0 * n))
+                mat[i, j] = math.sqrt(2.0 / 64) * math.cos((2 * j + 1) * i * math.pi / 128.0)
     return mat
 
 
-_DCT_BASIS_16 = _dct_2d_matrix(16)
+_DCT_BASIS_16x64 = _dct_16x64_matrix()
 
 
 def compute_pdq_hash(pil_img: Image.Image) -> Tuple[str, str, int]:
@@ -49,31 +49,28 @@ def compute_pdq_hash(pil_img: Image.Image) -> Tuple[str, str, int]:
     Compute Meta PDQ 256-bit perceptual hash for a given PIL image.
     
     Steps:
-    1. Convert to grayscale and resize to 64x64 using high-quality box filter.
-    2. Compute 2D Discrete Cosine Transform (DCT) on 64x64 raster.
-    3. Extract 16x16 low-frequency AC/DC coefficient block (excluding DC).
-    4. Compute median of 16x16 matrix (256 values).
+    1. Convert to grayscale and resize to 64x64 using bilinear filtering.
+    2. Apply Jarosz low-pass domain smoothing (BoxBlur(1)) to eliminate high-frequency aliasing.
+    3. Compute full 2D Discrete Cosine Transform (DCT) from 64x64 raster to 16x16 frequency matrix.
+    4. Compute median of AC coefficients (excluding DC).
     5. Threshold coefficients > median to produce 256 binary bits (64 hex characters).
     """
     if pil_img is None:
         return "0" * 64, "0" * 256, 0
 
-    # 1. Grayscale & 64x64 resampling
-    gray_img = pil_img.convert("L").resize((64, 64), Image.Resampling.BOX)
+    # 1. Grayscale & 64x64 resampling with Jarosz domain filter
+    gray_img = pil_img.convert("L").resize((64, 64), Image.Resampling.BILINEAR).filter(ImageFilter.BoxBlur(1))
     arr = np.array(gray_img, dtype=np.float64)
 
-    # 2. Block 2D-DCT down to 16x16
-    # Fast separable transform: D @ A_64x64 @ D.T -> subsample top-left 16x16
-    # Resample to 16x16 first or full 64x64 DCT:
-    # Meta PDQ standard downsamples to 64x64 then computes 16x16 DCT coefficients
-    sub_16 = arr[:16, :16]
-    dct_16 = _DCT_BASIS_16 @ sub_16 @ _DCT_BASIS_16.T
+    # 2. Full 2D-DCT from 64x64 raster down to 16x16 frequency domain
+    dct_16 = _DCT_BASIS_16x64 @ arr @ _DCT_BASIS_16x64.T
 
-    # 3. Median thresholding across 256 coefficients
-    flat_dct = dct_16.flatten()
-    med_val = float(np.median(flat_dct))
+    # 3. Median thresholding across AC coefficients (excluding DC at [0, 0])
+    ac_coeffs = dct_16[1:, 1:].flatten()
+    med_val = float(np.median(ac_coeffs)) if ac_coeffs.size > 0 else float(np.median(dct_16))
 
     # 4. Generate 256 binary bits
+    flat_dct = dct_16.flatten()
     bits = ["1" if val > med_val else "0" for val in flat_dct]
     bit_str = "".join(bits)
 
@@ -93,25 +90,36 @@ def compute_pdq_hash(pil_img: Image.Image) -> Tuple[str, str, int]:
 
 def compute_pdq_hamming_distance(hash1_hex: str, hash2_hex: str) -> int:
     """Compute exact bitwise Hamming Distance between two 256-bit PDQ hexadecimal hashes."""
-    if len(hash1_hex) != 64 or len(hash2_hex) != 64:
-        # Fallback length adjustment
-        h1 = int(hash1_hex.ljust(64, "0")[:64], 16)
-        h2 = int(hash2_hex.ljust(64, "0")[:64], 16)
-    else:
-        h1 = int(hash1_hex, 16)
-        h2 = int(hash2_hex, 16)
+    try:
+        if len(hash1_hex) != 64 or len(hash2_hex) != 64:
+            # Fallback length adjustment
+            h1 = int(hash1_hex.ljust(64, "0")[:64], 16)
+            h2 = int(hash2_hex.ljust(64, "0")[:64], 16)
+        else:
+            h1 = int(hash1_hex, 16)
+            h2 = int(hash2_hex, 16)
 
-    xor_val = h1 ^ h2
-    return bin(xor_val).count("1")
+        xor_val = h1 ^ h2
+        return bin(xor_val).count("1")
+    except Exception:
+        return 256
 
 
 class BKTreeNode:
     """Node in Burkhard-Keller metric tree for discrete metric spaces."""
     def __init__(self, hash_hex: str, item_id: str, metadata: Optional[Dict[str, Any]] = None):
         self.hash_hex = hash_hex
-        self.item_id = item_id
-        self.metadata = metadata or {}
+        self.item_ids: List[str] = [item_id]
+        self.metadata_list: List[Dict[str, Any]] = [metadata or {}]
         self.children: Dict[int, BKTreeNode] = {}
+
+    @property
+    def item_id(self) -> str:
+        return self.item_ids[0] if self.item_ids else ""
+
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return self.metadata_list[0] if self.metadata_list else {}
 
 
 class BKTreePDQIndex:
@@ -134,9 +142,10 @@ class BKTreePDQIndex:
         while True:
             dist = compute_pdq_hamming_distance(hash_hex, curr.hash_hex)
             if dist == 0:
-                # Exact duplicate hash: update metadata
-                if metadata:
-                    curr.metadata.update(metadata)
+                # Exact duplicate hash collision: preserve all item IDs and metadata
+                if item_id not in curr.item_ids:
+                    curr.item_ids.append(item_id)
+                    curr.metadata_list.append(metadata or {})
                 return
 
             if dist in curr.children:
@@ -160,13 +169,14 @@ class BKTreePDQIndex:
             node = candidates.pop()
             dist = compute_pdq_hamming_distance(query_hash_hex, node.hash_hex)
             if dist <= max_distance:
-                results.append({
-                    "item_id": node.item_id,
-                    "hash_hex": node.hash_hex,
-                    "hamming_distance": dist,
-                    "similarity_score": round(1.0 - (dist / 256.0), 4),
-                    "metadata": node.metadata,
-                })
+                for it_id, it_meta in zip(node.item_ids, node.metadata_list):
+                    results.append({
+                        "item_id": it_id,
+                        "hash_hex": node.hash_hex,
+                        "hamming_distance": dist,
+                        "similarity_score": round(1.0 - (dist / 256.0), 4),
+                        "metadata": it_meta,
+                    })
 
             # Triangle inequality branch pruning: |d(node, x) - dist| <= max_distance
             low = max(0, dist - max_distance)

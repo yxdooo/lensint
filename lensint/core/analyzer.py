@@ -4,6 +4,7 @@ import os
 import time
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import numpy as np
 from lensint.cache import get_cached, put_cache
 
 from lensint.core.models import AnalysisResult
@@ -56,15 +57,19 @@ class ImageAnalyzer:
                 except Exception:
                     pass
 
-        if "integrity" in d:   _fill(result.integrity, d["integrity"])
-        if "metadata" in d:    _fill(result.metadata, d["metadata"])
-        if "tampering" in d:   _fill(result.tampering, d["tampering"])
-        if "stego" in d:       _fill(result.stego, d["stego"])
-        if "strings" in d:     _fill(result.strings, d["strings"])
-        if "ai_detection" in d: _fill(result.ai_detection, d["ai_detection"])
-        if "malware" in d:     _fill(result.malware, d["malware"])
-        if "threat_intel" in d: _fill(result.threat_intel, d["threat_intel"])
-        if "ocr" in d:         _fill(result.ocr, d["ocr"])
+        if "integrity" in d:       _fill(result.integrity, d["integrity"])
+        if "metadata" in d:        _fill(result.metadata, d["metadata"])
+        if "tampering" in d:       _fill(result.tampering, d["tampering"])
+        if "stego" in d:           _fill(result.stego, d["stego"])
+        if "strings" in d:         _fill(result.strings, d["strings"])
+        if "ai_detection" in d:    _fill(result.ai_detection, d["ai_detection"])
+        if "malware" in d:         _fill(result.malware, d["malware"])
+        if "threat_intel" in d:    _fill(result.threat_intel, d["threat_intel"])
+        if "ocr" in d:             _fill(result.ocr, d["ocr"])
+        if "prnu" in d:            _fill(result.prnu, d["prnu"])
+        if "pdq" in d:             _fill(result.pdq, d["pdq"])
+        if "video" in d:           _fill(result.video, d["video"])
+        if "timestamp_token" in d: _fill(result.timestamp_token, d["timestamp_token"])
         if "fusion_telemetry" in d: result.fusion_telemetry = d["fusion_telemetry"]
         return result
 

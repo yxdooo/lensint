@@ -32,26 +32,12 @@ def generate_expert_witness_pdf(
 ) -> str:
     """
     Generate an official, courtroom-admissible Expert Witness Forensic Report PDF.
-    
-    Args:
-        result: Completed AnalysisResult object.
-        output_path: Target filesystem path for the output PDF.
-        case_id: Formal court or law enforcement case number.
-        evidence_id: Evidence locker / property clerk tracking ID.
-        examiner_name: Full name of the certifying forensic examiner.
-        examiner_title: Professional title/credentials.
-        agency_name: Law enforcement or forensic laboratory organization.
-        jurisdiction: Relevant court or administrative jurisdiction.
-        notes: Specific investigative notes or legal context.
-        tsa_url: Optional custom RFC 3161 TSA server URL.
-    
-    Returns:
-        Absolute path to the generated PDF file.
     """
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
     from reportlab.lib.units import inch
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.pdfgen import canvas
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether, HRFlowable
     )
@@ -61,8 +47,35 @@ def generate_expert_witness_pdf(
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
-    # 1. Query RFC 3161 Timestamp for the Evidence Digest
+    # 1. Query RFC 3161 Timestamp for Evidence Digest
     tsa_report = query_rfc3161_tsa(result.integrity.sha256, tsa_url=tsa_url)
+
+    class NumberedCourtCanvas(canvas.Canvas):
+        """Two-pass canvas to dynamically render total page counts and evidence footer."""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_footer(num_pages)
+                super().showPage()
+            super().save()
+
+        def draw_footer(self, page_count: int):
+            self.saveState()
+            self.setFont("Helvetica", 7.5)
+            self.setFillColor(colors.HexColor("#64748b"))
+            footer_text = f"ISO/IEC 27037 Evidence Audit | Page {self._pageNumber} of {page_count}"
+            self.drawRightString(7.75 * 72, 20, footer_text)
+            self.drawString(36, 20, f"EXHIBIT: {evidence_id} | SHA-256: {result.integrity.sha256[:16]}... - CONFIDENTIAL")
+            self.restoreState()
 
     doc = SimpleDocTemplate(
         abs_path,
@@ -75,7 +88,6 @@ def generate_expert_witness_pdf(
 
     styles = getSampleStyleSheet()
     
-    # Custom Palette
     PRIMARY = colors.HexColor("#0f172a")    # Slate 900
     SECONDARY = colors.HexColor("#1e293b")  # Slate 800
     ACCENT = colors.HexColor("#2563eb")     # Blue 600
@@ -85,22 +97,21 @@ def generate_expert_witness_pdf(
     BG_LIGHT = colors.HexColor("#f8fafc")   # Slate 50
     BORDER_COLOR = colors.HexColor("#cbd5e1")
 
-    # Typography Styles
     title_style = ParagraphStyle(
         "CourtTitle",
         parent=styles["Heading1"],
         fontName="Helvetica-Bold",
-        fontSize=18,
-        leading=22,
+        fontSize=17,
+        leading=21,
         textColor=PRIMARY,
-        alignment=1,  # Center
+        alignment=1,
     )
     subtitle_style = ParagraphStyle(
         "CourtSubtitle",
         parent=styles["Normal"],
         fontName="Helvetica-Bold",
-        fontSize=10,
-        leading=14,
+        fontSize=9.5,
+        leading=13,
         textColor=ACCENT,
         alignment=1,
     )
@@ -108,11 +119,11 @@ def generate_expert_witness_pdf(
         "CourtSection",
         parent=styles["Heading2"],
         fontName="Helvetica-Bold",
-        fontSize=12,
-        leading=16,
+        fontSize=11,
+        leading=15,
         textColor=PRIMARY,
-        spaceBefore=10,
-        spaceAfter=4,
+        spaceBefore=8,
+        spaceAfter=3,
     )
     body_style = ParagraphStyle(
         "CourtBody",
@@ -130,24 +141,30 @@ def generate_expert_witness_pdf(
         leading=12,
         textColor=PRIMARY,
     )
+    mono_style = ParagraphStyle(
+        "CourtMono",
+        parent=styles["Normal"],
+        fontName="Courier",
+        fontSize=7.5,
+        leading=10,
+        textColor=PRIMARY,
+    )
     verdict_style = ParagraphStyle(
         "CourtVerdict",
         parent=styles["Normal"],
         fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=15,
+        fontSize=10.5,
+        leading=14,
         textColor=DANGER if result.overall_risk_level in ("CRITICAL", "HIGH") else SUCCESS,
     )
 
     story = []
 
-    # =========================================================================
-    # 1. Official Header & Case Banner
-    # =========================================================================
+    # 1. Header Banner
     story.append(Paragraph("DIGITAL FORENSIC EXPERT WITNESS REPORT", title_style))
-    story.append(Paragraph("COURTROOM ADMISSIBLE EVIDENCE EXAMINATION & VERIFICATION", subtitle_style))
-    story.append(Spacer(1, 8))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=PRIMARY, spaceAfter=8))
+    story.append(Paragraph("COURTROOM ADMISSIBLE EVIDENCE EXAMINATION & VERIFICATION (FRE 702 / ISO 27037)", subtitle_style))
+    story.append(Spacer(1, 6))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=PRIMARY, spaceAfter=6))
 
     # Case Metadata Table
     case_data = [
@@ -170,45 +187,45 @@ def generate_expert_witness_pdf(
         ("BOX", (0, 0), (-1, -1), 1, BORDER_COLOR),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
     story.append(t_case)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    # =========================================================================
     # 2. Evidence Identification & Cryptographic Hash Chain
-    # =========================================================================
     story.append(Paragraph("1. EVIDENCE IDENTIFICATION & CRYPTOGRAPHIC CHAIN OF CUSTODY", section_style))
     
+    sha512_val = getattr(result.integrity, "sha512", "") or "N/A"
+    sha512_display = f"{sha512_val[:32]}...{sha512_val[-16:]}" if len(sha512_val) > 48 else sha512_val
+
     hash_data = [
         [Paragraph("<b>Item Name:</b>", body_style), Paragraph(result.integrity.file_name or "Evidence File", body_bold), Paragraph("<b>Logical Size:</b>", body_style), Paragraph(f"{result.integrity.file_size_bytes:,} Bytes", body_bold)],
         [Paragraph("<b>Detected MIME:</b>", body_style), Paragraph(result.integrity.detected_mime, body_bold), Paragraph("<b>Container Format:</b>", body_style), Paragraph(result.integrity.detected_format, body_bold)],
-        [Paragraph("<b>MD5 Digest:</b>", body_style), Paragraph(f"<code>{result.integrity.md5}</code>", body_style), Paragraph("<b>SSDEEP Fuzzy:</b>", body_style), Paragraph(f"<code>{result.integrity.ssdeep[:24]}...</code>" if result.integrity.ssdeep else "N/A", body_style)],
-        [Paragraph("<b>SHA-1 Digest:</b>", body_style), Paragraph(f"<code>{result.integrity.sha1}</code>", body_style), Paragraph("<b>Meta PDQ Hash:</b>", body_style), Paragraph(f"<code>{result.pdq.pdq_hash_hex[:24]}...</code>" if result.pdq.pdq_hash_hex else "N/A", body_style)],
-        [Paragraph("<b>SHA-256 (Primary):</b>", body_style), Paragraph(f"<code>{result.integrity.sha256}</code>", body_bold), Paragraph("<b>RFC 3161 Time Token:</b>", body_style), Paragraph(f"VERIFIED ({tsa_report.tsa_server[:20]})", body_bold)],
+        [Paragraph("<b>MD5 Digest:</b>", body_style), Paragraph(result.integrity.md5, mono_style), Paragraph("<b>SSDEEP Fuzzy:</b>", body_style), Paragraph(result.integrity.ssdeep[:24] + "..." if result.integrity.ssdeep else "N/A", mono_style)],
+        [Paragraph("<b>SHA-1 Digest:</b>", body_style), Paragraph(result.integrity.sha1, mono_style), Paragraph("<b>Meta PDQ Hash:</b>", body_style), Paragraph(result.pdq.pdq_hash_hex[:24] + "..." if result.pdq.pdq_hash_hex else "N/A", mono_style)],
+        [Paragraph("<b>SHA-256 Digest:</b>", body_style), Paragraph(result.integrity.sha256, mono_style), Paragraph("<b>SHA-512 Digest:</b>", body_style), Paragraph(sha512_display, mono_style)],
+        [Paragraph("<b>RFC 3161 Timestamp:</b>", body_style), Paragraph(f"{tsa_report.timestamp_utc} ({tsa_report.tsa_server[:25]})", body_bold), Paragraph("<b>Audit Seal Status:</b>", body_style), Paragraph(tsa_report.status, body_bold)],
     ]
-    t_hash = Table(hash_data, colWidths=[90, 200, 100, 150])
+    t_hash = Table(hash_data, colWidths=[95, 195, 95, 155])
     t_hash.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.white),
         ("BOX", (0, 0), (-1, -1), 1, BORDER_COLOR),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
     ]))
     story.append(t_hash)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    # =========================================================================
-    # 3. Formal Forensic Findings & Admissibility Verdict
-    # =========================================================================
+    # 3. Scientific Examination Results & Verdict
     story.append(Paragraph("2. SCIENTIFIC EXAMINATION RESULTS & VERDICT", section_style))
 
     risk_badge_color = DANGER if result.overall_risk_level == "CRITICAL" else (WARNING if result.overall_risk_level == "HIGH" else SUCCESS)
     verdict_text = f"FORENSIC VERDICT: [{result.overall_risk_level}] — CALIBRATED RISK PROBABILITY: {result.overall_risk_score:.1f}%"
 
-    summary_paragraphs = [Paragraph(f"<b>•</b> {finding}", body_style) for finding in result.summary_findings[:8]]
+    summary_paragraphs = [Paragraph(f"<b>•</b> {finding}", body_style) for finding in result.summary_findings[:6]]
     if not summary_paragraphs:
         summary_paragraphs = [Paragraph("• No physical tampering, steganography, or synthetic anomalies discovered.", body_style)]
 
@@ -221,28 +238,27 @@ def generate_expert_witness_pdf(
         ("BACKGROUND", (0, 0), (-1, 0), BG_LIGHT),
         ("BACKGROUND", (0, 1), (-1, 1), colors.white),
         ("BOX", (0, 0), (-1, -1), 1.5, risk_badge_color),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
     story.append(t_verdict)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    # =========================================================================
-    # 4. Multi-Dimensional Forensic Sub-Module Inspection Summary
-    # =========================================================================
+    # 4. Multi-Disciplinary Module Breakdown
     story.append(Paragraph("3. MULTI-DISCIPLINARY FORENSIC MODULE BREAKDOWN", section_style))
 
     cfa_status = "Tampering Anomaly Detected" if result.tampering.cfa_tampering_detected else "Consistent Bayer Pattern"
     dqt_status = result.tampering.dqt_identified_encoder or ("Quantization Anomaly" if result.tampering.dqt_hardware_mismatch else "Standard Table")
     stego_status = "Payload / Marker Discovered" if (result.stego.has_overlay_data or result.stego.lsb_stego_detected or result.stego.c2_stego_detected) else "Clean Bitstream"
     ai_status = f"{result.ai_detection.ai_verdict} ({result.ai_detection.ai_probability_score:.1f}%)"
+    prnu_status = f"Matched: {result.prnu.matched_device_id} (PCE: {result.prnu.peak_to_correlation_energy:.1f})" if result.prnu.is_device_matched else ("Residual Extracted" if result.prnu.fingerprint_extracted else "N/A")
 
     breakdown_data = [
-        [Paragraph("<b>Physical Tampering (ELA / DQT / Ghost):</b>", body_style), Paragraph(f"ELA Score: {result.tampering.ela_suspicion_score:.1f}/100 | Level: {result.tampering.suspicion_level}", body_style)],
-        [Paragraph("<b>Sensor CFA Demosaicing Integrity:</b>", body_style), Paragraph(cfa_status, body_style)],
-        [Paragraph("<b>Steganography & Carrier Covert Data:</b>", body_style), Paragraph(stego_status, body_style)],
+        [Paragraph("<b>Physical Tampering (ELA / DQT / Ghost):</b>", body_style), Paragraph(f"ELA Score: {result.tampering.ela_suspicion_score:.1f}/100 | DQT: {dqt_status}", body_style)],
+        [Paragraph("<b>Sensor CFA & PRNU Noise Correlation:</b>", body_style), Paragraph(f"CFA: {cfa_status} | PRNU: {prnu_status}", body_style)],
+        [Paragraph("<b>Steganography & Carrier Covert Channels:</b>", body_style), Paragraph(stego_status, body_style)],
         [Paragraph("<b>AI / Deepfake Generative Synthesis:</b>", body_style), Paragraph(ai_status, body_style)],
         [Paragraph("<b>Malware, Polyglot & YARA Threat Rules:</b>", body_style), Paragraph(f"Threats: {result.malware.has_threats} | Severity: {result.malware.severity}", body_style)],
     ]
@@ -251,15 +267,24 @@ def generate_expert_witness_pdf(
         ("BACKGROUND", (0, 0), (0, -1), BG_LIGHT),
         ("BOX", (0, 0), (-1, -1), 1, BORDER_COLOR),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
     ]))
     story.append(t_breakdown)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    # =========================================================================
-    # 5. Daubert Standard Scientific Disclosure & Peer-Reviewed Error Rates
-    # =========================================================================
+    # Optional Visual Evidence Plates
+    if getattr(result.tampering, "ela_b64_image", None):
+        try:
+            ela_bytes = base64.b64decode(result.tampering.ela_b64_image)
+            story.append(Paragraph("<b>Visual Evidence Plate: Error Level Analysis (ELA)</b>", body_bold))
+            story.append(Spacer(1, 2))
+            story.append(RLImage(io.BytesIO(ela_bytes), width=4.0 * inch, height=2.2 * inch))
+            story.append(Spacer(1, 6))
+        except Exception:
+            pass
+
+    # 5. Daubert Standard Scientific Disclosure
     story.append(Paragraph("4. DAUBERT STANDARD SCIENTIFIC DISCLOSURE (FRE 702 COMPLIANCE)", section_style))
     daubert_text = (
         "<b>Scientific Methodology:</b> The analysis conducted herein adheres to peer-reviewed digital forensic protocols "
@@ -269,11 +294,9 @@ def generate_expert_witness_pdf(
         "Chain of custody integrity is maintained in full compliance with ISO/IEC 27037:2012 standards."
     )
     story.append(Paragraph(daubert_text, body_style))
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 10))
 
-    # =========================================================================
-    # 6. Formal Certification & Digital Signature Block
-    # =========================================================================
+    # 6. Certification & Digital Signature Block
     sig_block = [
         [
             Paragraph("<b>EXAMINER CERTIFICATION & OATH:</b><br/>I certify that the examination and conclusions presented in this report represent an objective, scientifically validated forensic evaluation of the digital evidence item specified above.", body_style),
@@ -284,13 +307,13 @@ def generate_expert_witness_pdf(
     t_sig.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 1, PRIMARY),
         ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
     story.append(KeepTogether([t_sig]))
 
-    # Build Document
-    doc.build(story)
+    # Build Document with Numbered Canvas
+    doc.build(story, canvasmaker=NumberedCourtCanvas)
     return abs_path

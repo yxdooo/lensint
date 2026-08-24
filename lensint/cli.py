@@ -324,7 +324,9 @@ def main(args_list: List[str] = None) -> int:
             if args.extract_overlay:
                 out_overlay = _batch_path(args.extract_overlay, target_stem, target_hash)
                 from lensint.modules.stego import detect_overlay_data
-                has_ov, _, _, ov_bytes = detect_overlay_data(raw_bytes)
+                with open(current_target, "rb") as f_raw:
+                    target_bytes = f_raw.read()
+                has_ov, _, _, ov_bytes = detect_overlay_data(target_bytes)
                 if has_ov and ov_bytes:
                     parent_dir = os.path.dirname(os.path.abspath(out_overlay))
                     if parent_dir:

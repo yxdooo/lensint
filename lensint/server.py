@@ -217,10 +217,12 @@ async def analyze_image_pdf(
             case_id=case_id,
             examiner_name=examiner,
         )
+        from starlette.background import BackgroundTask
         return FileResponse(
             temp_pdf,
             media_type="application/pdf",
             filename=f"Expert_Forensic_Report_{result.integrity.sha256[:12]}.pdf",
+            background=BackgroundTask(os.remove, temp_pdf),
         )
     except HTTPException:
         raise

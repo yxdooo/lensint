@@ -312,7 +312,7 @@ def generate_expert_witness_pdf(
     story.append(Spacer(1, 10))
 
     # 5.5 Ultimate Expansion Forensics
-    story.append(Paragraph("5.5 LENSINT 4.5 Ultimate Forensics", heading2_style))
+    story.append(Paragraph("5.5 LENSINT 4.5 Ultimate Forensics", section_style))
     ult_data = [["Analysis Vector", "Result / Status"]]
     
     if getattr(result, "face_forensics", None):

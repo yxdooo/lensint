@@ -192,6 +192,42 @@ async def analyze_image_html(
         return HTMLResponse(f"<h3>Forensics Analysis Error</h3><p>{html.escape(str(e))}</p>", status_code=500)
 
 
+@app.post("/api/analyze/pdf")
+async def analyze_image_pdf(
+    file: UploadFile = File(...),
+    case_id: str = Query("CASE-2026-DFIR-001"),
+    examiner: str = Query("Senior Digital Forensic Examiner"),
+    ela_quality: int = Query(90, ge=1, le=100),
+    use_cache: bool = Query(True),
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Generate and download an official Courtroom Expert Witness PDF Forensic Report."""
+    _verify_api_key(x_api_key, authorization)
+    try:
+        from lensint.reporters.expert_pdf import generate_expert_witness_pdf
+        result = await run_in_threadpool(
+            _process_upload_streaming, file, ela_quality, False, False, use_cache
+        )
+        fd, temp_pdf = tempfile.mkstemp(suffix=".pdf", prefix="lensint_courtroom_")
+        os.close(fd)
+        generate_expert_witness_pdf(
+            result=result,
+            output_path=temp_pdf,
+            case_id=case_id,
+            examiner_name=examiner,
+        )
+        return FileResponse(
+            temp_pdf,
+            media_type="application/pdf",
+            filename=f"Expert_Forensic_Report_{result.integrity.sha256[:12]}.pdf",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": "PDF Generation Failed", "details": str(e)})
+
+
 @app.post("/api/analyze/batch")
 async def analyze_batch(
     files: List[UploadFile] = File(...),

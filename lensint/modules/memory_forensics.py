@@ -339,3 +339,13 @@ class MemoryForensicsEngine:
                 offset_base += len(new_chunk)
 
         return all_carved
+
+
+def carve_memory_artifacts(raw_bytes: bytes, max_carved_items: int = 100) -> Dict[str, Any]:
+    """Carve embedded images and graphic buffers from in-memory byte streams."""
+    engine = MemoryForensicsEngine(max_carve_size_bytes=50_000_000)
+    images = engine.carve_memory_stream(raw_bytes, max_images=max_carved_items)
+    return {
+        "carved_images": images,
+        "count": len(images),
+    }

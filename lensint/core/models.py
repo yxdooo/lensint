@@ -12,6 +12,7 @@ class IntegrityReport:
     sha1: str = ""
     sha256: str = ""
     sha512: str = ""
+    ssdeep: str = ""
     detected_format: str = "Unknown"
     detected_mime: str = "application/octet-stream"
     extension: str = ""
@@ -270,6 +271,68 @@ class OCRReport:
 
 
 @dataclass
+class PRNUReport:
+    fingerprint_extracted: bool = False
+    noise_residual_energy: float = 0.0
+    matched_device_id: Optional[str] = None
+    peak_to_correlation_energy: float = 0.0
+    is_device_matched: bool = False
+    false_alarm_rate_estimate: float = 1.0
+    details: Dict[str, Any] = field(default_factory=dict)
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class PDQReport:
+    pdq_hash_hex: str = ""
+    pdq_hash_binary: str = ""
+    quality_score: int = 100
+    is_threat_match: bool = False
+    matched_reference_id: Optional[str] = None
+    min_hamming_distance: int = 256
+    matching_findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class VideoForensicsReport:
+    is_video: bool = False
+    container_format: str = "Unknown"
+    duration_seconds: float = 0.0
+    total_frames_analyzed: int = 0
+    gop_structure: List[str] = field(default_factory=list)
+    has_gop_cadence_break: bool = False
+    has_trailing_payload: bool = False
+    trailing_payload_size_bytes: int = 0
+    editing_software_footprints: List[str] = field(default_factory=list)
+    atoms_detected: List[Dict[str, Any]] = field(default_factory=list)
+    findings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class TimestampTokenReport:
+    status: str = "GRANTED"
+    timestamp_utc: str = ""
+    tsa_server: str = "LOCAL_OFFLINE_SEAL"
+    evidence_sha256: str = ""
+    token_der_b64: str = ""
+    serial_number: str = ""
+    is_trusted_tsa: bool = False
+    details: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class AnalysisResult:
     target_path: str = ""
     timestamp: str = ""
@@ -287,6 +350,10 @@ class AnalysisResult:
     malware: MalwareReport = field(default_factory=MalwareReport)
     threat_intel: ThreatIntelReport = field(default_factory=ThreatIntelReport)
     ocr: OCRReport = field(default_factory=OCRReport)
+    prnu: PRNUReport = field(default_factory=PRNUReport)
+    pdq: PDQReport = field(default_factory=PDQReport)
+    video: VideoForensicsReport = field(default_factory=VideoForensicsReport)
+    timestamp_token: TimestampTokenReport = field(default_factory=TimestampTokenReport)
     fusion_telemetry: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -307,5 +374,9 @@ class AnalysisResult:
             "malware": self.malware.to_dict(),
             "threat_intel": self.threat_intel.to_dict(),
             "ocr": self.ocr.to_dict(),
+            "prnu": self.prnu.to_dict(),
+            "pdq": self.pdq.to_dict(),
+            "video": self.video.to_dict(),
+            "timestamp_token": self.timestamp_token.to_dict(),
             "fusion_telemetry": self.fusion_telemetry,
         }

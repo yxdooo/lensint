@@ -78,6 +78,17 @@ Examples:
         help="Generate deployable YARA detection rule (.yar) matching detected threats and hashes",
     )
     parser.add_argument(
+        "--pdf", "--pdf-report",
+        dest="pdf_report",
+        metavar="REPORT_PATH",
+        help="Generate an official courtroom-grade Expert Witness PDF forensic report (ISO/IEC 27037 compliant)",
+    )
+    parser.add_argument(
+        "--tsa-server",
+        metavar="URL",
+        help="RFC 3161 Time-Stamp Authority (TSA) endpoint for evidence timestamping",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Disable result caching (always re-analyze)",
@@ -366,6 +377,19 @@ def main(args_list: List[str] = None) -> int:
                 export_yara_rule(result, yara_path)
                 with print_lock:
                     console.print(f"[bold green]Deployable YARA rule written to:[/bold green] {yara_path}")
+
+            if getattr(args, "pdf_report", None):
+                from lensint.reporters.expert_pdf import generate_expert_witness_pdf
+                pdf_path = _batch_path(args.pdf_report, target_stem, target_hash)
+                generate_expert_witness_pdf(
+                    result=result,
+                    output_path=pdf_path,
+                    case_id=args.case_id or "CASE-2026-DFIR-001",
+                    examiner_name=args.examiner or "Senior Digital Forensic Examiner",
+                    tsa_url=getattr(args, "tsa_server", None),
+                )
+                with print_lock:
+                    console.print(f"[bold green]Official Expert Witness PDF report written to:[/bold green] {pdf_path}")
 
             # Forensic Audit Trail & Chain of Custody Record
             if not args.no_audit:

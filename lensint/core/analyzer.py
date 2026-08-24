@@ -248,7 +248,46 @@ class ImageAnalyzer:
             for inj in injections:
                 result.summary_findings.append(f"Prompt Injection Alert: {inj['type']} ({inj['sample']}).")
         except Exception as e:
-            logger.error(f"Prompt injection scan error: {e}")
+            logger.debug(f"Prompt injection scan error: {e}")
+
+        # Video Container & Temporal GOP Analysis
+        try:
+            from lensint.modules.video_forensics import analyze_video_forensics
+            v_rep = analyze_video_forensics(raw_bytes)
+            result.video = v_rep
+            if v_rep.is_video:
+                result.integrity.detected_format = v_rep.container_format
+                for vf in v_rep.findings:
+                    result.summary_findings.append(vf)
+        except Exception as e:
+            logger.debug(f"Video forensics check: {e}")
+
+        # Meta PDQ 256-bit Perceptual Hash Analysis
+        try:
+            from lensint.modules.pdq_hash import analyze_pdq_triage
+            pdq_rep = analyze_pdq_triage(pil_img)
+            result.pdq = pdq_rep
+            for pf in pdq_rep.matching_findings:
+                result.summary_findings.append(pf)
+        except Exception as e:
+            logger.debug(f"PDQ hash analysis: {e}")
+
+        # PRNU Camera Sensor Noise Residual Extraction
+        try:
+            from lensint.modules.prnu import extract_noise_residual
+            if pil_img and not result.integrity.is_screenshot:
+                residual = extract_noise_residual(pil_img)
+                result.prnu.fingerprint_extracted = True
+                result.prnu.noise_residual_energy = round(float(np.var(residual)), 4)
+        except Exception as e:
+            logger.debug(f"PRNU extraction: {e}")
+
+        # RFC 3161 Evidence Timestamp Token Seal
+        try:
+            from lensint.utils.tsa import query_rfc3161_tsa
+            result.timestamp_token = query_rfc3161_tsa(result.integrity.sha256)
+        except Exception as e:
+            logger.debug(f"TSA timestamp seal: {e}")
 
         self._calculate_verdict(result)
         result.analysis_duration_seconds = time.monotonic() - start_time

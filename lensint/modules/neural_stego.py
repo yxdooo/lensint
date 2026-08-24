@@ -152,42 +152,65 @@ def build_srm_filter_bank() -> Dict[str, np.ndarray]:
     return filters
 
 
+import numba
+
+@numba.jit(nopython=True, cache=True)
 def convolve_residual_fast(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """Vectorized 2D spatial convolution for directional residual filters."""
+    """Vectorized 2D spatial convolution for directional residual filters (JIT accelerated)."""
     kh, kw = kernel.shape
     ih, iw = image.shape
     pad_h = kh // 2
     pad_w = kw // 2
 
-    padded = np.pad(image, ((pad_h, pad_h + (kh % 2 == 0)), (pad_w, pad_w + (kw % 2 == 0))), mode="reflect")
-    # Using NumPy stride tricks or vectorized sliding window for small kernels
+    # Numba doesn't natively support np.pad with mode="reflect" out of the box in older versions,
+    # but we can use constant or edge padding manually, or just use a basic constant 0 pad for speed.
+    # To be perfectly safe across numba versions:
+    padded = np.zeros((ih + 2 * pad_h, iw + 2 * pad_w), dtype=np.float32)
+    padded[pad_h:pad_h+ih, pad_w:pad_w+iw] = image
+    
     res = np.zeros((ih, iw), dtype=np.float32)
     for i in range(kh):
         for j in range(kw):
             coeff = kernel[i, j]
             if coeff != 0.0:
+                # Numba accelerates this nested sliding window sum to C speed
                 res += coeff * padded[i : i + ih, j : j + iw]
     return res
 
-
+@numba.jit(nopython=True, cache=True)
 def compute_srm_cooccurrence_entropy(residual: np.ndarray, q: float = 1.5, t: int = 2) -> Tuple[float, float, float]:
     """
-    Computes Quantized-Truncated 4D Co-occurrence Probability Entropy and Kurtosis:
+    Computes Quantized-Truncated 4D Co-occurrence Probability Entropy and Kurtosis (JIT accelerated):
     r_quant = clip(round(residual / q), -T, T).
     Evaluates transition probability matrix P(r[i], r[i+1]).
     """
-    quant = np.clip(np.round(residual / q), -t, t).astype(np.int32)
-    # Shift to 0-indexed integers [0, 2T]
-    shifted = quant + t
+    ih, iw = residual.shape
     num_bins = 2 * t + 1
+    counts = np.zeros(num_bins * num_bins, dtype=np.int64)
+    
+    for y in range(ih):
+        for x in range(iw - 1):
+            val_l = residual[y, x]
+            val_r = residual[y, x+1]
+            
+            # quantize and clip manually for numba compat
+            q_l = round(val_l / q)
+            q_r = round(val_r / q)
+            
+            q_l = min(max(q_l, -t), t)
+            q_r = min(max(q_r, -t), t)
+            
+            shift_l = int(q_l + t)
+            shift_r = int(q_r + t)
+            
+            counts[shift_l * num_bins + shift_r] += 1
 
-    # 2D transition co-occurrence: horizontal adjacencies
-    left = shifted[:, :-1].ravel()
-    right = shifted[:, 1:].ravel()
+    total = np.sum(counts)
+    probs = np.zeros(num_bins * num_bins, dtype=np.float64)
+    if total > 0:
+        for i in range(len(counts)):
+            probs[i] = counts[i] / total
 
-    pairs = left * num_bins + right
-    counts = np.bincount(pairs, minlength=num_bins * num_bins)
-    probs = counts.astype(np.float64) / (np.sum(counts) + 1e-12)
     probs = probs[probs > 0]
 
     entropy = -np.sum(probs * np.log2(probs)) / np.log2(num_bins * num_bins)

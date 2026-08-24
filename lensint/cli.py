@@ -7,6 +7,7 @@ import argparse
 import glob
 import os
 import sys
+import logging
 from typing import List
 
 from rich.console import Console
@@ -16,6 +17,17 @@ from lensint.core.analyzer import ImageAnalyzer
 from lensint.reporters.console import render_console_report
 from lensint.reporters.html_rep import render_html_report
 from lensint.reporters.json_rep import render_json_report
+from lensint.utils.system_checks import require_exiftool
+
+# Ensure logging is configured early
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Run mandatory system checks
+require_exiftool()
 
 
 def build_serve_parser() -> argparse.ArgumentParser:

@@ -5,20 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lensint"
 version = "3.5.0"
-description = "Advanced Digital Image Forensics, AI Detection & Threat Intelligence Framework"
+description = "Enterprise Digital Media Forensics, Steganography Extraction & Threat Intelligence Framework"
 readme = "README.md"
 authors = [
     { name = "Lensint Security Team", email = "research@lensint.io" }
 ]
 license = { text = "MIT" }
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 keywords = [
     "forensics",
     "image-forensics",
+    "video-forensics",
     "steganography",
     "malware-analysis",
     "ai-detection",
     "deepfake-detection",
+    "c2pa",
+    "rppg",
     "osint",
     "stix2",
     "dfir"
@@ -28,7 +31,6 @@ classifiers = [
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -41,6 +43,8 @@ dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0",
     "rich>=13.0.0",
+    "reportlab>=3.6.0",
+    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +56,11 @@ server = [
 ]
 cv = [
     "opencv-python-headless>=4.8.0",
+    "scipy>=1.10.0",
+]
+crypto = [
+    "cbor2>=5.4.0",
+    "cryptography>=41.0.0",
 ]
 dev = [
     "pytest>=7.0.0",
@@ -65,6 +74,11 @@ all = [
     "uvicorn>=0.22.0",
     "python-multipart>=0.0.6",
     "opencv-python-headless>=4.8.0",
+    "scipy>=1.10.0",
+    "cbor2>=5.4.0",
+    "cryptography>=41.0.0",
+    "reportlab>=3.6.0",
+    "requests>=2.28.0",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "httpx>=0.24.0",

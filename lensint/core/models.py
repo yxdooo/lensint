@@ -3,6 +3,48 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
+
+@dataclass
+class CMFDAnalysis:
+    cmfd_performed: bool = False
+    cloned_regions_detected: bool = False
+    suspicious_match_count: int = 0
+    message: str = ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return self.__dict__
+
+@dataclass
+class FaceForensics:
+    face_extraction_performed: bool = False
+    faces_found: int = 0
+    rois: List[Dict[str, int]] = field(default_factory=list)
+    message: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.__dict__
+
+@dataclass
+class AudioDeepfakeAnalysis:
+    audio_analysis_performed: bool = False
+    is_synthetic_audio: bool = False
+    spectral_anomaly_score: float = 0.0
+    message: str = ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return self.__dict__
+
+@dataclass
+class C2PAVerification:
+    c2pa_present: bool = False
+    is_valid: bool = False
+    assertions: List[str] = field(default_factory=list)
+    message: str = ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return self.__dict__
+
+@dataclass
 class IntegrityReport:
     file_path: str = ""
     file_name: str = ""
@@ -449,6 +491,12 @@ class AnalysisResult:
     optics: OpticsReport = field(default_factory=OpticsReport)
     neural_stego: NeuralStegoReport = field(default_factory=NeuralStegoReport)
     fusion_telemetry: Dict[str, Any] = field(default_factory=dict)
+    
+    # 4.5 Ultimate Expansion Fields
+    cmfd: CMFDAnalysis = field(default_factory=CMFDAnalysis)
+    face_forensics: FaceForensics = field(default_factory=FaceForensics)
+    audio_analysis: AudioDeepfakeAnalysis = field(default_factory=AudioDeepfakeAnalysis)
+    c2pa_verification: C2PAVerification = field(default_factory=C2PAVerification)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -477,4 +525,8 @@ class AnalysisResult:
             "optics": self.optics.to_dict(),
             "neural_stego": self.neural_stego.to_dict(),
             "fusion_telemetry": self.fusion_telemetry,
+            "cmfd": self.cmfd.to_dict(),
+            "face_forensics": self.face_forensics.to_dict(),
+            "audio_analysis": self.audio_analysis.to_dict(),
+            "c2pa_verification": self.c2pa_verification.to_dict(),
         }

@@ -131,7 +131,7 @@ class ImageAnalyzer:
                 return res
 
         def _run_metadata():
-            return analyze_metadata(raw_bytes, pil_img.copy() if pil_img else None)
+            return analyze_metadata(self.file_path, raw_bytes, pil_img.copy() if pil_img else None)
 
         def _run_stego():
             return analyze_stego(raw_bytes, pil_img.copy() if pil_img else None, generate_visuals=self.generate_visuals)
@@ -167,6 +167,38 @@ class ImageAnalyzer:
             from lensint.modules.ocr_scan import analyze_ocr
             return analyze_ocr(pil_img.copy() if pil_img else None)
 
+        def _run_cmfd():
+            from lensint.modules.cmfd import analyze_cmfd
+            from lensint.core.models import CMFDAnalysis
+            d = analyze_cmfd(self.file_path)
+            res = CMFDAnalysis()
+            res.__dict__.update(d)
+            return res
+
+        def _run_face_forensics():
+            from lensint.modules.face_forensics import extract_faces_for_analysis
+            from lensint.core.models import FaceForensics
+            d = extract_faces_for_analysis(self.file_path)
+            res = FaceForensics()
+            res.__dict__.update(d)
+            return res
+
+        def _run_audio():
+            from lensint.modules.audio_deepfake import analyze_audio_deepfake
+            from lensint.core.models import AudioDeepfakeAnalysis
+            d = analyze_audio_deepfake(self.file_path)
+            res = AudioDeepfakeAnalysis()
+            res.__dict__.update(d)
+            return res
+
+        def _run_c2pa_verifier():
+            from lensint.modules.c2pa_verifier import verify_c2pa_signature
+            from lensint.core.models import C2PAVerification
+            d = verify_c2pa_signature(raw_bytes)
+            res = C2PAVerification()
+            res.__dict__.update(d)
+            return res
+
         # Use min(available_cpus, 6) threads so we don't over-subscribe on
         # low-core machines while still saturating multi-core workstations.
         # A per-task timeout of 120 s prevents a single slow module from
@@ -182,6 +214,10 @@ class ImageAnalyzer:
             futures_map["ai"]       = executor.submit(_run_ai_detect)
             futures_map["malware"]  = executor.submit(_run_malware)
             futures_map["ocr"]      = executor.submit(_run_ocr)
+            futures_map["cmfd"]     = executor.submit(_run_cmfd)
+            futures_map["face"]     = executor.submit(_run_face_forensics)
+            futures_map["audio"]    = executor.submit(_run_audio)
+            futures_map["c2pa"]     = executor.submit(_run_c2pa_verifier)
 
             def _safe_result(key, future, timeout=_TASK_TIMEOUT):
                 try:
@@ -199,6 +235,10 @@ class ImageAnalyzer:
             ai_res      = _safe_result("ai",       futures_map["ai"])
             malware_res = _safe_result("malware",  futures_map["malware"])
             ocr_res     = _safe_result("ocr",      futures_map["ocr"])
+            cmfd_res    = _safe_result("cmfd",     futures_map["cmfd"])
+            face_res    = _safe_result("face",     futures_map["face"])
+            audio_res   = _safe_result("audio",    futures_map["audio"])
+            c2pa_res    = _safe_result("c2pa",     futures_map["c2pa"])
 
         # Assign results, falling back to empty report objects on failure
         if meta_res is not None:
@@ -213,6 +253,14 @@ class ImageAnalyzer:
             result.malware = malware_res
         if ocr_res is not None:
             result.ocr = ocr_res
+        if cmfd_res is not None:
+            result.cmfd = cmfd_res
+        if face_res is not None:
+            result.face_forensics = face_res
+        if audio_res is not None:
+            result.audio_analysis = audio_res
+        if c2pa_res is not None:
+            result.c2pa_verification = c2pa_res
 
         # If OCR text wasn't extracted via image OCR, cross-correlate with binary strings
         if not result.ocr.text_detected and result.strings.sample_strings:

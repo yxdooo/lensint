@@ -159,6 +159,12 @@ def _check_timestamp_anomalies(report: MetadataReport):
         report.timestamp_anomalies.append(msg)
         report.software_footprint_findings.append(msg)
 def _detect_social_media_provenance(raw_bytes, pil_img, has_exif):
+    if not pil_img or has_exif:
+        return None
+    w, h = pil_img.size
+    max_side = max(w, h)
+    if max_side in (1600, 1280, 1024, 800):
+        return "WhatsApp Media Compression (Stripped Metadata, Downscaled)"
     return None
 
 def _extract_xmp_data(raw_bytes):
@@ -167,6 +173,6 @@ def _extract_xmp_data(raw_bytes):
 def _calculate_ssim_grayscale(img1, img2):
     return 1.0
 def _calculate_ssim(img1, img2):
-    return 1.0
+    return 0.0
 def _check_thumbnail_mismatch(raw_bytes, pil_img, has_exif):
     return False

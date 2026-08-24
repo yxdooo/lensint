@@ -34,7 +34,7 @@ class TestMetadataModule(unittest.TestCase):
 
     def test_xmp_and_iptc_analysis(self):
         raw_bytes = b'<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreatorTool="Adobe Photoshop 2024"/></rdf:RDF></x:xmpmeta>'
-        report = analyze_metadata(raw_bytes, None)
+        report = analyze_metadata("dummy_path.jpg", raw_bytes, None)
         self.assertTrue(report.xmp_present)
         self.assertIn("Photoshop", " ".join(report.software_footprint_findings))
 

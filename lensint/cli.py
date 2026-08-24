@@ -17,7 +17,7 @@ from lensint.core.analyzer import ImageAnalyzer
 from lensint.reporters.console import render_console_report
 from lensint.reporters.html_rep import render_html_report
 from lensint.reporters.json_rep import render_json_report
-from lensint.utils.system_checks import require_exiftool
+from lensint.utils.system_checks import run_all_checks
 
 # Ensure logging is configured early
 logging.basicConfig(
@@ -26,8 +26,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Run mandatory system checks
-require_exiftool()
+# Run mandatory system checks (ExifTool, FFmpeg, etc.)
+run_all_checks()
 
 
 def build_serve_parser() -> argparse.ArgumentParser:

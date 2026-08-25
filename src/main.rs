@@ -9,6 +9,7 @@ mod carver;
 mod cmfd;
 mod ai;
 mod ocr;
+mod audit;
 mod report;
 
 use clap::Parser;
@@ -45,6 +46,8 @@ struct AnalysisResult {
     carved_images: usize,
     threat_signatures: Vec<String>,
     error: Option<String>,
+    audit_timestamp: u64,
+    evidentiary_seal: String,
 }
 
 fn process_file(path: &Path) -> AnalysisResult {
@@ -67,6 +70,8 @@ fn process_file(path: &Path) -> AnalysisResult {
                 carved_images: 0,
                 threat_signatures: vec![],
                 error: Some(format!("Hash error: {}", e)),
+                audit_timestamp: 0,
+                evidentiary_seal: "ERROR_UNSEALED".to_string(),
             };
         }
     };
@@ -112,6 +117,10 @@ fn process_file(path: &Path) -> AnalysisResult {
 
     let carved_images = carver::carve_embedded_images(path);
     let threat_signatures = signatures::scan_payloads(path);
+    
+    // Generate the Evidentiary Seal based on the SHA256 file identity
+    let file_hash_str = hashes.as_ref().map(|h| h.sha256.clone()).unwrap_or_default();
+    let (audit_timestamp, evidentiary_seal) = audit::generate_evidentiary_seal(&path_str, &file_hash_str);
 
     AnalysisResult {
         file_path: path_str,
@@ -127,6 +136,8 @@ fn process_file(path: &Path) -> AnalysisResult {
         carved_images,
         threat_signatures,
         error: None,
+        audit_timestamp,
+        evidentiary_seal,
     }
 }
 

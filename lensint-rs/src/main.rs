@@ -1,6 +1,7 @@
 mod crypto;
 mod metadata;
 mod forensics;
+mod strings;
 
 use clap::Parser;
 use rayon::prelude::*;
@@ -27,6 +28,7 @@ struct AnalysisResult {
     hashes: Option<crypto::FileHashes>,
     exif: Option<metadata::ExifData>,
     ela_score: Option<f32>,
+    strings_found: usize,
     error: Option<String>,
 }
 
@@ -41,6 +43,7 @@ fn process_file(path: &Path) -> AnalysisResult {
                 hashes: None,
                 exif: None,
                 ela_score: None,
+                strings_found: 0,
                 error: Some(format!("Hash error: {}", e)),
             };
         }
@@ -70,11 +73,17 @@ fn process_file(path: &Path) -> AnalysisResult {
         }
     };
 
+    let strings_found = match strings::extract_ascii_strings(path, 6) {
+        Ok(strs) => strs.len(),
+        Err(_) => 0,
+    };
+
     AnalysisResult {
         file_path: path_str,
         hashes,
         exif,
         ela_score,
+        strings_found,
         error: None,
     }
 }

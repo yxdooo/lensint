@@ -2,6 +2,8 @@ mod crypto;
 mod metadata;
 mod forensics;
 mod strings;
+mod ghosts;
+mod signatures;
 
 use clap::Parser;
 use rayon::prelude::*;
@@ -28,7 +30,9 @@ struct AnalysisResult {
     hashes: Option<crypto::FileHashes>,
     exif: Option<metadata::ExifData>,
     ela_score: Option<f32>,
+    jpeg_ghost_variance: Option<f32>,
     strings_found: usize,
+    threat_signatures: Vec<String>,
     error: Option<String>,
 }
 
@@ -43,7 +47,9 @@ fn process_file(path: &Path) -> AnalysisResult {
                 hashes: None,
                 exif: None,
                 ela_score: None,
+                jpeg_ghost_variance: None,
                 strings_found: 0,
+                threat_signatures: vec![],
                 error: Some(format!("Hash error: {}", e)),
             };
         }
@@ -57,19 +63,21 @@ fn process_file(path: &Path) -> AnalysisResult {
         }
     };
 
-    let ela_score = match image::open(path) {
+    let (ela_score, jpeg_ghost_variance) = match image::open(path) {
         Ok(img) => {
-            match forensics::generate_ela(&img, 90, 15.0) {
+            let ghost_var = ghosts::calculate_grid_variance(&img);
+            let ela = match forensics::generate_ela(&img, 90, 15.0) {
                 Ok(ela_img) => Some(forensics::calculate_ela_score(&ela_img)),
                 Err(e) => {
                     tracing::warn!("ELA failed for {:?}: {}", path, e);
                     None
                 }
-            }
+            };
+            (ela, Some(ghost_var))
         },
         Err(e) => {
-            tracing::warn!("Failed to open image for ELA {:?}: {}", path, e);
-            None
+            tracing::warn!("Failed to open image {:?}: {}", path, e);
+            (None, None)
         }
     };
 
@@ -78,12 +86,16 @@ fn process_file(path: &Path) -> AnalysisResult {
         Err(_) => 0,
     };
 
+    let threat_signatures = signatures::scan_payloads(path);
+
     AnalysisResult {
         file_path: path_str,
         hashes,
         exif,
         ela_score,
+        jpeg_ghost_variance,
         strings_found,
+        threat_signatures,
         error: None,
     }
 }

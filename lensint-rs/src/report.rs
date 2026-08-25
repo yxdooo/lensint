@@ -50,7 +50,13 @@ pub fn generate_html_report(results: &[AnalysisResult], output_path: &Path) -> a
                 writeln!(file, "<tr><td>JPEG Ghost Variance</td><td>{:.4}</td></tr>", ghost)?;
             }
 
+            if let Some(lsb) = res.lsb_entropy {
+                let color = if lsb > 7.95 { "class='alert'" } else { "" };
+                writeln!(file, "<tr><td>LSB Entropy</td><td {}> {:.4}</td></tr>", color, lsb)?;
+            }
+
             writeln!(file, "<tr><td>ASCII Strings Found</td><td>{}</td></tr>", res.strings_found)?;
+            writeln!(file, "<tr><td>Embedded Images Carved</td><td>{}</td></tr>", res.carved_images)?;
 
             if !res.threat_signatures.is_empty() {
                 let threats = res.threat_signatures.join(", ");

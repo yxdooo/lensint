@@ -1,5 +1,6 @@
-﻿mod crypto;
+mod crypto;
 mod metadata;
+mod forensics;
 
 use clap::Parser;
 use rayon::prelude::*;
@@ -25,6 +26,7 @@ struct AnalysisResult {
     file_path: String,
     hashes: Option<crypto::FileHashes>,
     exif: Option<metadata::ExifData>,
+    ela_score: Option<f32>,
     error: Option<String>,
 }
 
@@ -38,6 +40,7 @@ fn process_file(path: &Path) -> AnalysisResult {
                 file_path: path_str,
                 hashes: None,
                 exif: None,
+                ela_score: None,
                 error: Some(format!("Hash error: {}", e)),
             };
         }
@@ -51,10 +54,27 @@ fn process_file(path: &Path) -> AnalysisResult {
         }
     };
 
+    let ela_score = match image::open(path) {
+        Ok(img) => {
+            match forensics::generate_ela(&img, 90, 15.0) {
+                Ok(ela_img) => Some(forensics::calculate_ela_score(&ela_img)),
+                Err(e) => {
+                    tracing::warn!("ELA failed for {:?}: {}", path, e);
+                    None
+                }
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Failed to open image for ELA {:?}: {}", path, e);
+            None
+        }
+    };
+
     AnalysisResult {
         file_path: path_str,
         hashes,
         exif,
+        ela_score,
         error: None,
     }
 }

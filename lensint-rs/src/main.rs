@@ -4,6 +4,7 @@ mod forensics;
 mod strings;
 mod ghosts;
 mod signatures;
+mod report;
 
 use clap::Parser;
 use rayon::prelude::*;
@@ -138,10 +139,14 @@ fn main() -> anyhow::Result<()> {
         .map(|p| process_file(p))
         .collect();
 
-    info!("Analysis complete. Writing report to {}", args.output);
-    
+    info!("Analysis complete. Writing JSON report to {}", args.output);
     let json = serde_json::to_string_pretty(&results)?;
     std::fs::write(&args.output, json)?;
 
+    let html_path = format!("{}.html", args.output);
+    info!("Writing HTML report to {}", html_path);
+    report::generate_html_report(&results, Path::new(&html_path))?;
+
+    info!("All operations finished successfully.");
     Ok(())
 }

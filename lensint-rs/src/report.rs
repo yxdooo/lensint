@@ -50,6 +50,11 @@ pub fn generate_html_report(results: &[AnalysisResult], output_path: &Path) -> a
                 writeln!(file, "<tr><td>JPEG Ghost Variance</td><td>{:.4}</td></tr>", ghost)?;
             }
 
+            if let Some(cmfd) = res.cmfd_clones {
+                let color = if cmfd > 0 { "class='alert'" } else { "" };
+                writeln!(file, "<tr><td>Copy-Move Clones Found</td><td {}> {}</td></tr>", color, cmfd)?;
+            }
+
             if let Some(lsb) = res.lsb_entropy {
                 let color = if lsb > 7.95 { "class='alert'" } else { "" };
                 writeln!(file, "<tr><td>LSB Entropy</td><td {}> {:.4}</td></tr>", color, lsb)?;

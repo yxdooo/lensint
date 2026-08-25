@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LENSINT v3.0 — Advanced Forensic Image Analysis & Threat Intelligence Platform</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="title">LENS<span>INT</span> // CYBER FORENSICS & THREAT INTELLIGENCE</div>
+      <div class="subtitle">Deep Authenticity Verification, AI Diffusion Detection, Secret Leak Scanner & Malware Hunter</div>
+    </div>
+    <div class="badge-version">v3.0 ENTERPRISE</div>
+  </div>
+
+  <div class="drop-zone" id="drop-zone">
+    <div class="drop-icon">🛡️</div>
+    <div class="drop-title">Drag & Drop Evidence Image or Folder Here</div>
+    <div class="drop-hint">Supports JPEG, PNG, WebP, GIF, TIFF, BMP (Up to 50MB) • Multi-File Batch Analysis Supported</div>
+    <input type="file" id="file-input" style="display:none;" multiple accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff">
+    <button class="btn" onclick="document.getElementById('file-input').click()">Browse Evidence Files</button>
+  </div>
+
+  <div class="spinner" id="spinner">
+    ⚡ Analyzing Evidence... Running Multi-Scale ELA, YARA, RS Steganalysis, Secret Leak Scanning & PRNU Sensor Noise Correlation...
+  </div>
+
+  <div class="results-panel" id="results-panel">
+    <div class="verdict-banner" id="verdict-banner">
+      <div>
+        <div class="verdict-title" id="verdict-title">VERDICT: ANALYZING</div>
+        <div style="font-size:13px; color:var(--text-muted); margin-top:4px;" id="verdict-subtitle">Evidence Hash Fingerprint Verified</div>
+      </div>
+      <div class="verdict-score" id="verdict-score">0 / 100</div>
+    </div>
+
+    <!-- Export Action Bar -->
+    <div class="action-bar" style="margin-bottom:20px; display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn" id="btn-export-html" style="background:#1e293b; border:1px solid #334155; font-size:12px;">📄 Full HTML Report</button>
+      <button class="btn" id="btn-export-json" style="background:#1e293b; border:1px solid #334155; font-size:12px;">📊 JSON Data</button>
+      <button class="btn" id="btn-export-stix" style="background:#1e293b; border:1px solid #334155; font-size:12px;">🌐 STIX 2.1 Threat Bundle</button>
+      <button class="btn" id="btn-export-misp" style="background:#1e293b; border:1px solid #334155; font-size:12px;">⚡ MISP Event</button>
+      <button class="btn" id="btn-export-yara" style="background:#1e293b; border:1px solid #334155; font-size:12px;">🎯 YARA Rule (.yar)</button>
+    </div>
+
+    <div class="grid-3">
+      <!-- 1. Integrity -->
+      <div class="card">
+        <div class="card-title">1. File Integrity & Cryptographic Hashes</div>
+        <div class="metric-row"><span class="metric-label">File Name:</span><span class="metric-val" id="m-name">-</span></div>
+        <div class="metric-row"><span class="metric-label">File Size:</span><span class="metric-val" id="m-size">-</span></div>
+        <div class="metric-row"><span class="metric-label">Detected Format:</span><span class="metric-val" id="m-mime">-</span></div>
+        <div class="metric-row"><span class="metric-label">SHA-256 Hash:</span><span class="metric-val" id="m-sha256" style="font-family:monospace;font-size:11px;">-</span></div>
+        <div class="metric-row"><span class="metric-label">MD5 Hash:</span><span class="metric-val" id="m-md5" style="font-family:monospace;font-size:11px;">-</span></div>
+      </div>
+
+      <!-- 2. Metadata -->
+      <div class="card">
+        <div class="card-title">2. Metadata & Provenance</div>
+        <div class="metric-row"><span class="metric-label">Camera:</span><span class="metric-val" id="meta-cam">-</span></div>
+        <div class="metric-row"><span class="metric-label">Software:</span><span class="metric-val" id="meta-soft">-</span></div>
+        <div class="metric-row"><span class="metric-label">Social Provenance:</span><span class="metric-val" id="meta-prov">-</span></div>
+        <div class="metric-row"><span class="metric-label">Thumbnail SSIM:</span><span class="metric-val" id="meta-ssim">-</span></div>
+        <div class="metric-row"><span class="metric-label">GPS Location:</span><span class="metric-val" id="meta-gps">-</span></div>
+      </div>
+
+      <!-- 3. AI & Synthetic -->
+      <div class="card">
+        <div class="card-title">3. AI & Deepfake Detection</div>
+        <div class="metric-row"><span class="metric-label">AI Verdict:</span><span class="metric-val" id="ai-verdict">-</span></div>
+        <div class="metric-row"><span class="metric-label">AI Probability:</span><span class="metric-val" id="ai-score">-</span></div>
+        <div class="metric-row"><span class="metric-label">PRNU Sensor Noise:</span><span class="metric-val" id="ai-prnu">-</span></div>
+        <div class="metric-row"><span class="metric-label">2D FFT Spectrum:</span><span class="metric-val" id="ai-fft">-</span></div>
+      </div>
+
+      <!-- 4. Tampering Forensics -->
+      <div class="card">
+        <div class="card-title">4. Tampering & Splicing Forensics</div>
+        <div class="metric-row"><span class="metric-label">ELA Score:</span><span class="metric-val" id="tamp-ela">-</span></div>
+        <div class="metric-row"><span class="metric-label">Copy-Move (Cloning):</span><span class="metric-val" id="tamp-cm">-</span></div>
+        <div class="metric-row"><span class="metric-label">Splice Inconsistency:</span><span class="metric-val" id="tamp-splice">-</span></div>
+        <div class="metric-row"><span class="metric-label">JPEG Ghosts:</span><span class="metric-val" id="tamp-ghost">-</span></div>
+        <div class="metric-row"><span class="metric-label">DQT Encoder:</span><span class="metric-val" id="tamp-dqt">-</span></div>
+      </div>
+
+      <!-- 5. Stego & Malware -->
+      <div class="card">
+        <div class="card-title">5. Steganography & Malware Rules</div>
+        <div class="metric-row"><span class="metric-label">Overlay Payload:</span><span class="metric-val" id="stego-overlay">-</span></div>
+        <div class="metric-row"><span class="metric-label">RS Steganalysis:</span><span class="metric-val" id="stego-rs">-</span></div>
+        <div class="metric-row"><span class="metric-label">Malware Threats:</span><span class="metric-val" id="mal-threat">-</span></div>
+        <div class="metric-row"><span class="metric-label">YARA Matches:</span><span class="metric-val" id="mal-yara">-</span></div>
+      </div>
+
+      <!-- 6. OCR & Confidential Secret Leaks -->
+      <div class="card">
+        <div class="card-title">6. OCR & Secret Leak Scanner</div>
+        <div class="metric-row"><span class="metric-label">OCR Text Detected:</span><span class="metric-val" id="ocr-detected">-</span></div>
+        <div class="metric-row"><span class="metric-label">API Keys / Tokens:</span><span class="metric-val" id="ocr-keys" style="color:var(--verdict-critical);">-</span></div>
+        <div class="metric-row"><span class="metric-label">Passwords Found:</span><span class="metric-val" id="ocr-pass" style="color:var(--verdict-high);">-</span></div>
+        <div class="metric-row"><span class="metric-label">Private Keys / Seed:</span><span class="metric-val" id="ocr-priv" style="color:var(--verdict-critical);">-</span></div>
+      </div>
+    </div>
+
+    <!-- Forensic Visualizations Carousel / Gallery -->
+    <div class="card" style="margin-top:20px;">
+      <div class="card-title">7. Courtroom Visual Evidence & Heatmaps</div>
+      <div id="visual-gallery" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:15px; margin-top:15px;">
+        <div style="text-align:center; color:var(--text-muted); padding:30px;">Analyzing evidence visuals...</div>
+      </div>
+    </div>
+
+    <!-- Key Findings Summary -->
+    <div class="card" style="margin-top:20px;">
+      <div class="card-title">8. Summary Forensic Findings</div>
+      <ul id="findings-list" style="margin:10px 0 0 20px; color:#cbd5e1; font-size:13px; line-height:1.6;"></ul>
+    </div>
+  </div>
+</div>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

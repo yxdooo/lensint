@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LENSINT — Forensic Image Analysis Platform</title>
+<style>
+:root {
+  --bg-primary: #0a0c10;
+  --bg-secondary: #12161f;
+  --bg-card: #181d28;
+  --border-color: #262f40;
+  --text-main: #e2e8f0;
+  --text-muted: #8492a6;
+  --accent-cyan: #00f2fe;
+  --accent-blue: #4facfe;
+  --verdict-critical: #ff3366;
+  --verdict-high: #ff6b4a;
+  --verdict-elevated: #f6ad55;
+  --verdict-clean: #00e676;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-main);
+  padding: 24px;
+  min-height: 100vh;
+}
+.container { max-width: 1200px; margin: 0 auto; }
+.header {
+  background: linear-gradient(135deg, #181d28 0%, #0d1117 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px 28px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.title { font-size: 22px; font-weight: 800; color: #fff; letter-spacing: 0.5px; }
+.title span { color: var(--accent-cyan); }
+.subtitle { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+.drop-zone {
+  border: 2px dashed var(--border-color);
+  background: var(--bg-card);
+  border-radius: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  margin-bottom: 20px;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--accent-cyan);
+  background: rgba(0, 242, 254, 0.04);
+}
+.drop-icon { font-size: 40px; margin-bottom: 12px; }
+.drop-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+.drop-hint { color: var(--text-muted); font-size: 13px; }
+.options-bar {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: center;
+  font-size: 13px;
+}
+.opt-group { display: flex; align-items: center; gap: 8px; }
+.opt-group label { color: var(--text-muted); }
+.opt-group input[type="range"] { accent-color: var(--accent-cyan); width: 100px; }
+.opt-group input[type="checkbox"] { accent-color: var(--accent-cyan); width: 16px; height: 16px; cursor: pointer; }
+.btn-analyze {
+  background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-cyan) 100%);
+  color: #0a0c10;
+  border: none;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 10px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: opacity 0.2s;
+}
+.btn-analyze:hover { opacity: 0.9; }
+.btn-analyze:disabled { opacity: 0.4; cursor: not-allowed; }
+.spinner {
+  display: none;
+  margin: 40px auto;
+  text-align: center;
+}
+.spinner-ring {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(0, 242, 254, 0.15);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.report-frame {
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  min-height: 800px;
+  display: none;
+}
+.batch-results {
+  display: none;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.batch-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+}
+.batch-card-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 8px; word-break: break-all; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.badge-clean { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid #00e676; }
+.badge-low { background: rgba(79, 172, 254, 0.15); color: #4facfe; border: 1px solid #4facfe; }
+.badge-elevated { background: rgba(246, 173, 85, 0.15); color: #f6ad55; border: 1px solid #f6ad55; }
+.badge-high { background: rgba(255, 107, 74, 0.15); color: #ff6b4a; border: 1px solid #ff6b4a; }
+.badge-critical { background: rgba(255, 51, 102, 0.2); color: #ff3366; border: 1px solid #ff3366; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="title">LENSINT <span>FORENSICS PLATFORM</span></div>
+      <div class="subtitle">Courtroom-Grade Image Forgery, Steganography & Threat Analysis</div>
+    </div>
+  </div>
+
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-icon">🔍</div>
+    <div class="drop-title" id="dropTitle">Drag & Drop image file(s) here, or click to browse</div>
+    <div class="drop-hint">Supports JPEG, PNG, WEBP, GIF, TIFF, BMP (Single or Multi-file Batch)</div>
+    <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
+  </div>
+
+  <div class="options-bar">
+    <div class="opt-group">
+      <label for="elaVal">ELA Quality:</label>
+      <input type="range" id="elaVal" min="70" max="99" value="90" oninput="document.getElementById('elaDisp').innerText = this.value">
+      <span id="elaDisp" style="color: var(--accent-cyan); font-weight:700;">90</span>
+    </div>
+    <div class="opt-group">
+      <input type="checkbox" id="chkGeo">
+      <label for="chkGeo">Geo Reverse Lookup</label>
+    </div>
+    <div class="opt-group">
+      <input type="checkbox" id="chkVisuals" checked>
+      <label for="chkVisuals">Generate Visual Heatmaps</label>
+    </div>
+    <div class="opt-group">
+      <input type="checkbox" id="chkCache" checked>
+      <label for="chkCache">Use SHA-256 Cache</label>
+    </div>
+    <button class="btn-analyze" id="btnAnalyze" disabled onclick="startAnalysis()">Run Forensic Analysis</button>
+  </div>
+
+  <div class="spinner" id="spinner">
+    <div class="spinner-ring"></div>
+    <div style="color: var(--accent-cyan); font-weight: 600;" id="spinnerText">Analyzing image structures...</div>
+  </div>
+
+  <iframe class="report-frame" id="reportFrame" frameborder="0"></iframe>
+  <div class="batch-results" id="batchResults"></div>
+</div>
+
+<script>
+let selectedFiles = [];
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const btnAnalyze = document.getElementById('btnAnalyze');
+const dropTitle = document.getElementById('dropTitle');
+const spinner = document.getElementById('spinner');
+const reportFrame = document.getElementById('reportFrame');
+const batchResults = document.getElementById('batchResults');
+
+dropZone.onclick = () => fileInput.click();
+fileInput.onchange = (e) => handleFiles(e.target.files);
+
+dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+dropZone.ondrop = (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+};
+
+function handleFiles(files) {
+  if (!files || files.length === 0) return;
+  selectedFiles = Array.from(files);
+  if (selectedFiles.length === 1) {
+    dropTitle.innerText = `Selected: ${selectedFiles[0].name} (${(selectedFiles[0].size / 1024).toFixed(1)} KB)`;
+  } else {
+    dropTitle.innerText = `Selected: ${selectedFiles.length} files for batch analysis`;
+  }
+  btnAnalyze.disabled = false;
+}
+
+async function startAnalysis() {
+  if (selectedFiles.length === 0) return;
+  btnAnalyze.disabled = true;
+  spinner.style.display = 'block';
+  reportFrame.style.display = 'none';
+  batchResults.style.display = 'none';
+  batchResults.innerHTML = '';
+
+  const ela = document.getElementById('elaVal').value;
+  const geo = document.getElementById('chkGeo').checked;
+  const visuals = document.getElementById('chkVisuals').checked;
+  const cache = document.getElementById('chkCache').checked;
+
+  try {
+    if (selectedFiles.length === 1) {
+      document.getElementById('spinnerText').innerText = `Analyzing ${selectedFiles[0].name}...`;
+      const fd = new FormData();
+      fd.append('file', selectedFiles[0]);
+      const url = `/api/analyze/html?ela_quality=${ela}&geo_lookup=${geo}&generate_visuals=${visuals}&use_cache=${cache}`;
+      const res = await fetch(url, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const htmlText = await res.text();
+      reportFrame.srcdoc = htmlText;
+      reportFrame.style.display = 'block';
+    } else {
+      document.getElementById('spinnerText').innerText = `Running batch analysis on ${selectedFiles.length} files...`;
+      const fd = new FormData();
+      for (const f of selectedFiles) fd.append('files', f);
+      const url = `/api/analyze/batch?ela_quality=${ela}&geo_lookup=${geo}&generate_visuals=${visuals}&use_cache=${cache}`;
+      const res = await fetch(url, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const data = await res.json();
+      renderBatchResults(data.results || []);
+    }
+  } catch (err) {
+    alert('Analysis error: ' + err.message);
+  } finally {
+    spinner.style.display = 'none';
+    btnAnalyze.disabled = false;
+  }
+}
+
+function renderBatchResults(results) {
+  batchResults.style.display = 'grid';
+  for (const r of results) {
+    const card = document.createElement('div');
+    card.className = 'batch-card';
+    if (r.error) {
+      card.innerHTML = `<div class="batch-card-title">${r.filename || 'File'}</div><div style="color:var(--verdict-critical);">Error: ${r.error}</div>`;
+    } else {
+      const bClass = 'badge-' + (r.overall_risk_level || 'low').toLowerCase();
+      card.innerHTML = `
+        <div class="batch-card-title">${r.integrity?.file_name || r.target_path || 'Image'}</div>
+        <div style="margin-bottom:8px;"><span class="badge ${bClass}">${r.overall_risk_level} (${r.overall_risk_score}/100)</span></div>
+        <div style="font-size:12px; color:var(--text-muted);">Size: ${r.integrity?.file_size_human || 'N/A'} | Format: ${r.integrity?.detected_format || 'N/A'}</div>
+        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">Duration: ${(r.analysis_duration_seconds || 0).toFixed(2)}s ${r.cache_hit ? '⚡ (Cached)' : ''}</div>
+      `;
+    }
+    batchResults.appendChild(card);
+  }
+}
+</script>
+</body>
+</html>

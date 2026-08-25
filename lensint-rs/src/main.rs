@@ -8,6 +8,7 @@ mod stego;
 mod carver;
 mod cmfd;
 mod ai;
+mod ocr;
 mod report;
 
 use clap::Parser;
@@ -39,6 +40,7 @@ struct AnalysisResult {
     cmfd_clones: Option<usize>,
     lsb_entropy: Option<f32>,
     ai_deepfake_score: Option<f32>,
+    text_regions_found: usize,
     strings_found: usize,
     carved_images: usize,
     threat_signatures: Vec<String>,
@@ -60,6 +62,7 @@ fn process_file(path: &Path) -> AnalysisResult {
                 cmfd_clones: None,
                 lsb_entropy: None,
                 ai_deepfake_score: None,
+                text_regions_found: 0,
                 strings_found: 0,
                 carved_images: 0,
                 threat_signatures: vec![],
@@ -97,6 +100,11 @@ fn process_file(path: &Path) -> AnalysisResult {
         }
     };
 
+    let text_regions_found = match image::open(path) {
+        Ok(img) => ocr::detect_text_regions(&img),
+        Err(_) => 0,
+    };
+
     let strings_found = match strings::extract_ascii_strings(path, 6) {
         Ok(strs) => strs.len(),
         Err(_) => 0,
@@ -114,6 +122,7 @@ fn process_file(path: &Path) -> AnalysisResult {
         cmfd_clones,
         lsb_entropy,
         ai_deepfake_score,
+        text_regions_found,
         strings_found,
         carved_images,
         threat_signatures,

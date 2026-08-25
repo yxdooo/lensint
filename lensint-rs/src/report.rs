@@ -65,6 +65,7 @@ pub fn generate_html_report(results: &[AnalysisResult], output_path: &Path) -> a
                 writeln!(file, "<tr><td>AI/Deepfake Probability</td><td {}> {:.1}%</td></tr>", color, ai_score * 100.0)?;
             }
 
+            writeln!(file, "<tr><td>Text Regions Detected (OCR)</td><td>{}</td></tr>", res.text_regions_found)?;
             writeln!(file, "<tr><td>ASCII Strings Found</td><td>{}</td></tr>", res.strings_found)?;
             writeln!(file, "<tr><td>Embedded Images Carved</td><td>{}</td></tr>", res.carved_images)?;
 

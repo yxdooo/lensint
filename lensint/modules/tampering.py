@@ -1,6 +1,6 @@
 """
 LENSINT - Deep Forensic Tampering & Image Manipulation Analysis Engine.
-Courtroom-Grade Forensic Verification:
+Forensic Forensic Verification:
 1. Error Level Analysis (ELA)
 2. Copy-Move (Cloning) Keypoint Matching
 3. JPEG Ghosts & Double Compression Detection
@@ -889,7 +889,7 @@ def analyze_tampering(
 
         if composite_score >= 60.0 or cm_detected or (ghost_det and not is_screenshot):
             report.suspicion_level = "HIGH"
-            report.findings.append(f"High digital manipulation probability (Courtroom-grade composite score: {min(100.0, composite_score):.1f}/100).")
+            report.findings.append(f"High digital manipulation probability (Forensic-grade composite score: {min(100.0, composite_score):.1f}/100).")
         elif composite_score >= 30.0:
             report.suspicion_level = "MEDIUM"
             report.findings.append(f"Moderate editing indications detected (Composite score: {min(100.0, composite_score):.1f}/100).")

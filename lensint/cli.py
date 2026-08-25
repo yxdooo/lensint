@@ -93,7 +93,7 @@ Examples:
         "--pdf", "--pdf-report",
         dest="pdf_report",
         metavar="REPORT_PATH",
-        help="Generate an official courtroom-grade Expert Witness PDF forensic report (ISO/IEC 27037 compliant)",
+        help="Generate an official forensic-grade Expert Witness PDF forensic report (ISO/IEC 27037 compliant)",
     )
     parser.add_argument(
         "--tsa-server",
@@ -374,7 +374,8 @@ def main(args_list: List[str] = None) -> int:
                 use_cache=not args.no_cache,
             )
 
-            result = analyzer.analyze()
+            with console.status(f"[bold cyan]Analyzing {os.path.basename(current_target)}...[/bold cyan]", spinner="dots"):
+                result = analyzer.analyze()
             with print_lock:
                 render_console_report(result, console=console, quiet=args.quiet)
 

@@ -1,7 +1,7 @@
 """Forensic Chain of Custody & Audit Trail Module for LENSINT.
 
 Generates cryptographically sealed, tamper-evident audit records for every
-forensic analysis run, ensuring courtroom admissibility and compliance with
+forensic analysis run, ensuring detailed audit trailing and compliance with
 ISO/IEC 27037 digital evidence handling standards using chained hash validation.
 """
 from __future__ import annotations

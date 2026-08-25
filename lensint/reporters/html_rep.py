@@ -301,7 +301,7 @@ body {{
     </div>
 
     <div class="card">
-      <div class="card-title">6. Courtroom-Grade Tampering & Forgery Forensics</div>
+      <div class="card-title">6. Forensic Tampering & Forgery Forensics</div>
       <table class="table" style="margin-bottom: 12px;">
         <tr><td class="key-cell">ELA Disparity Score</td><td class="val-cell">{result.tampering.ela_suspicion_score}/100.0 (Suspicion: {_e(result.tampering.suspicion_level)})</td></tr>
         <tr><td class="key-cell">Copy-Move Cloning</td><td class="val-cell">{'<span class="status-pill pill-red">DETECTED (' + str(result.tampering.copy_move_match_count) + ' pairs)</span>' if result.tampering.copy_move_detected else '<span class="status-pill pill-green">Clean</span>'}</td></tr>
@@ -366,10 +366,10 @@ body {{
     </div>
   </div>
 
-  <!-- ROW 6: LENSINT 4.5 Ultimate Expansion -->
+  <!-- ROW 6: Advanced Media Forensics -->
   <div class="grid-2">
     <div class="card">
-      <div class="card-title">11. Ultimate Expansion: Face, Audio & C2PA</div>
+      <div class="card-title">11. Advanced Media Forensics: Face, Audio & C2PA</div>
       <table class="table">
         <tr><td class="key-cell">Face-ROI Deepfake</td><td class="val-cell">{'<span class="status-pill pill-red">FACES FOUND (' + str(result.face_forensics.faces_found) + ')</span>' if getattr(result, 'face_forensics', None) and result.face_forensics.faces_found > 0 else 'No Faces'}</td></tr>
         <tr><td class="key-cell">Audio Synth Clone</td><td class="val-cell">{'<span class="status-pill pill-red">SYNTHETIC AUDIO DETECTED</span>' if getattr(result, 'audio_analysis', None) and result.audio_analysis.is_synthetic_audio else 'Natural / None'}</td></tr>

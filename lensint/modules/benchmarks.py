@@ -4,7 +4,7 @@ Provides:
 1. DatasetBenchmarkRunner: Ingests ground-truth labeled datasets, executes detector algorithms,
    tracks errors/failures, computes ROC-AUC, and calculates the empirical optimal threshold via Youden's J statistic.
 2. BayesianForensicFusionEngine: Multi-modal evidence fusion with:
-   - Configurable Context-Aware Prior Probability (DFIR triage, social media OSINT, courtroom evidence).
+   - Configurable Context-Aware Prior Probability (DFIR triage, social media OSINT, evidentiary analysis).
    - Correlation Attenuation & Dependency Discounting (handling correlated JPEG/compression artifacts).
    - Differentiated Likelihood Weighting for confirmed payloads vs heuristic signatures.
 """
@@ -22,7 +22,7 @@ logger = logging.getLogger("lensint.benchmarks")
 PRIOR_PRESETS = {
     "dfir_incident_triage": 0.20,       # Standard forensic investigation triage
     "social_media_osint": 0.05,         # Wild social media / open web scraping
-    "courtroom_criminal_evidence": 0.50, # Focused criminal evidence inquiry
+    "detailed_criminal_evidence": 0.50, # Focused criminal evidence inquiry
     "malware_dropzone_sandbox": 0.75,   # High-threat malware honeypot/sandbox
 }
 

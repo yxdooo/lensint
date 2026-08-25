@@ -492,7 +492,7 @@ class AnalysisResult:
     neural_stego: NeuralStegoReport = field(default_factory=NeuralStegoReport)
     fusion_telemetry: Dict[str, Any] = field(default_factory=dict)
     
-    # 4.5 Ultimate Expansion Fields
+    # Advanced Media Forensics
     cmfd: CMFDAnalysis = field(default_factory=CMFDAnalysis)
     face_forensics: FaceForensics = field(default_factory=FaceForensics)
     audio_analysis: AudioDeepfakeAnalysis = field(default_factory=AudioDeepfakeAnalysis)

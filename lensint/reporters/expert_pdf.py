@@ -1,6 +1,6 @@
-"""Official Courtroom Expert Witness PDF Forensic Report Generator for LENSINT.
+"""Official Detailed Expert Witness PDF Forensic Report Generator for LENSINT.
 
-Generates legally admissible, courtroom-grade digital forensic expert witness reports
+Generates legally admissible, forensic-grade digital forensic expert witness reports
 compliant with Federal Rules of Evidence (FRE 702 / 901), Daubert Standards, and ISO/IEC 27037:2012.
 Includes cryptographic hash verification tables, RFC 3161 timestamping verification,
 forensic visual evidence plates, error rate disclosures, and formal expert witness opinions.
@@ -31,7 +31,7 @@ def generate_expert_witness_pdf(
     tsa_url: Optional[str] = None,
 ) -> str:
     """
-    Generate an official, courtroom-admissible Expert Witness Forensic Report PDF.
+    Generate an official, detailed forensic Expert Witness Forensic Report PDF.
     """
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
@@ -162,7 +162,7 @@ def generate_expert_witness_pdf(
 
     # 1. Header Banner
     story.append(Paragraph("DIGITAL FORENSIC EXPERT WITNESS REPORT", title_style))
-    story.append(Paragraph("COURTROOM ADMISSIBLE EVIDENCE EXAMINATION & VERIFICATION (FRE 702 / ISO 27037)", subtitle_style))
+    story.append(Paragraph("DETAILED FORENSIC EVIDENCE EXAMINATION & VERIFICATION (FRE 702 / ISO 27037)", subtitle_style))
     story.append(Spacer(1, 6))
     story.append(HRFlowable(width="100%", thickness=1.5, color=PRIMARY, spaceAfter=6))
 
@@ -311,8 +311,8 @@ def generate_expert_witness_pdf(
     story.append(Paragraph(ts_text, body_style))
     story.append(Spacer(1, 10))
 
-    # 5.5 Ultimate Expansion Forensics
-    story.append(Paragraph("5.5 LENSINT 4.5 Ultimate Forensics", section_style))
+    # 5.5 Advanced Media Forensics
+    story.append(Paragraph("5.5 Advanced Media Forensics", section_style))
     ult_data = [["Analysis Vector", "Result / Status"]]
     
     if getattr(result, "face_forensics", None):

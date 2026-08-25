@@ -85,8 +85,8 @@ def render_console_report(result: AnalysisResult, console: Optional[Console] = N
         t_ai.add_row("PRNU Hardware Sensor", prnu_str)
         console.print(t_ai)
 
-        # 4. Courtroom-Grade Deep Tampering Forensics
-        t_tamp = Table(title="[bold]4. Courtroom-Grade Tampering & Manipulation Analysis[/bold]", box=box.SIMPLE_HEAVY, show_header=True)
+        # 4. Forensic Deep Tampering Forensics
+        t_tamp = Table(title="[bold]4. Forensic Tampering & Manipulation Analysis[/bold]", box=box.SIMPLE_HEAVY, show_header=True)
         t_tamp.add_column("Forensic Method", style="bold white", width=26)
         t_tamp.add_column("Observation / Measurement", style="cyan")
         t_tamp.add_row("Error Level Analysis (ELA)", f"{result.tampering.ela_suspicion_score} / 100.0 (Confidence: {result.tampering.ela_confidence:.0f}%)")

@@ -306,7 +306,7 @@ async def analyze_image_pdf(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Generate and download an official Courtroom Expert Witness PDF Forensic Report."""
+    """Generate and download an official Detailed Expert Witness PDF Forensic Report."""
     _verify_api_key(x_api_key, authorization)
     rate_limit_response = _check_rate_limit(request)
     if rate_limit_response is not None:

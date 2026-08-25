@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "lensint"
 version = "1.0.0"
 edition = "2021"
@@ -10,8 +10,10 @@ clap = { version = "4.4", features = ["derive"] }
 rayon = "1.8"
 image = "0.24"
 sha2 = "0.10"
+md-5 = "0.10"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+kamadak-exif = "0.5"

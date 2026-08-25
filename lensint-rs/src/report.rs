@@ -60,6 +60,11 @@ pub fn generate_html_report(results: &[AnalysisResult], output_path: &Path) -> a
                 writeln!(file, "<tr><td>LSB Entropy</td><td {}> {:.4}</td></tr>", color, lsb)?;
             }
 
+            if let Some(ai_score) = res.ai_deepfake_score {
+                let color = if ai_score > 0.85 { "class='alert'" } else { "" };
+                writeln!(file, "<tr><td>AI/Deepfake Probability</td><td {}> {:.1}%</td></tr>", color, ai_score * 100.0)?;
+            }
+
             writeln!(file, "<tr><td>ASCII Strings Found</td><td>{}</td></tr>", res.strings_found)?;
             writeln!(file, "<tr><td>Embedded Images Carved</td><td>{}</td></tr>", res.carved_images)?;
 
